@@ -108,6 +108,11 @@ static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
 static xSemaphoreHandle sensorsDataReadComplete;
 
+#ifdef PERFMONITOR
+static uint64_t lastDataReadyTimeUs = 0;
+uint32_t sensorDataReadyLoopTimeUs = 0;
+#endif
+
 static bool isInit = false;
 static sensorData_t sensors;
 static volatile uint64_t dataReadyTimeUsec = 0;
@@ -210,6 +215,13 @@ static void sensorsTask(void *param)
   {
     if (pdTRUE == xSemaphoreTake(sensorsDataReady, portMAX_DELAY))
     {
+#ifdef PERFMONITOR
+      // Record the timestamp and save the loop time
+      uint64_t dataReadyTimestamp = usecTimestamp();
+      sensorDataReadyLoopTimeUs = (uint32_t)(dataReadyTimestamp - lastDataReadyTimeUs);
+      lastDataReadyTimeUs = dataReadyTimestamp;
+#endif
+
       // data is ready to be read
       uint8_t dataLen = (uint8_t) (SENSORS_MPU6500_BUFF_LEN +
               (isMagnetometerPresent ? SENSORS_MAG_BUFF_LEN : 0) +
@@ -220,6 +232,7 @@ static void sensorsTask(void *param)
       uint64_t dataTimestamp = dataReadyTimeUsec;
 
       i2cdevRead(I2C3_DEV, MPU6500_ADDRESS_AD0_HIGH, MPU6500_RA_ACCEL_XOUT_H, dataLen, buffer);
+
       // these functions process the respective data and queue it on the output queues
       processAccGyroMeasurements(&(buffer[0]), dataTimestamp);
       if (isMagnetometerPresent)

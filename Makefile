@@ -18,6 +18,7 @@ PYTHON2           ?= python2
 DFU_UTIL          ?= dfu-util
 CLOAD             ?= 1
 DEBUG             ?= 0
+PERFMONITOR       ?= 0
 CLOAD_SCRIPT      ?= python3 -m cfloader
 CLOAD_CMDS        ?=
 CLOAD_ARGS        ?=
@@ -194,6 +195,10 @@ PROJ_OBJ += version.o FreeRTOS-openocd.o
 PROJ_OBJ_CF2 += configblockeeprom.o crc_bosch.o
 PROJ_OBJ_CF2 += sleepus.o
 
+ifeq ($(PERFMONITOR), 1)
+PROJ_OBJ += perfmonitor.o
+endif
+
 # Libs
 PROJ_OBJ_CF2 += libarm_math.a
 
@@ -255,6 +260,10 @@ ifeq ($(USE_ESKYLINK), 1)
 endif
 
 CFLAGS += -DBOARD_REV_$(REV) -DESTIMATOR_NAME=$(ESTIMATOR)Estimator -DCONTROLLER_TYPE_$(CONTROLLER) -DPOWER_DISTRIBUTION_TYPE_$(POWER_DISTRIBUTION)
+
+ifeq ($(PERFMONITOR), 1)
+CFLAGS += -DPERFMONITOR
+endif
 
 CFLAGS += $(PROCESSOR) $(INCLUDES) $(STFLAGS)
 ifeq ($(PLATFORM), CF2)

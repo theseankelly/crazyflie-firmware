@@ -44,6 +44,14 @@
 #include "estimator_kalman.h"
 #include "estimator.h"
 
+#ifdef PERFMONITOR
+#include "usec_time.h"
+
+static uint64_t stabilizerPrevLoopTimestampUs = 0;
+uint32_t stabilizerLoopTimeUs = 0;
+uint32_t sensorToOutputLatencyUs = 0;
+#endif
+
 static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
@@ -129,6 +137,12 @@ static void stabilizerTask(void* param)
     vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
 #endif
 
+#ifdef PERFMONITOR
+    uint64_t loopTimestamp = usecTimestamp();
+    stabilizerLoopTimeUs = (uint32_t)(loopTimestamp - stabilizerPrevLoopTimestampUs);
+    stabilizerPrevLoopTimestampUs = loopTimestamp;
+#endif
+
     getExtPosition(&state);
     stateEstimator(&state, &sensorData, &control, tick);
 
@@ -143,8 +157,12 @@ static void stabilizerTask(void* param)
     if (emergencyStop) {
       powerStop();
     } else {
-      powerDistribution(&control);
-    }
+#ifdef PERFMONITOR 
+        uint64_t powerDistributionTime = usecTimestamp();
+        sensorToOutputLatencyUs = (uint32_t)(powerDistributionTime - sensorData.gyro.timestamp);
+#endif
+        powerDistribution(&control);
+      }
 
     tick++;
   }

@@ -11,6 +11,14 @@
 #define POS_UPDATE_RATE RATE_100_HZ
 #define POS_UPDATE_DT 1.0/POS_UPDATE_RATE
 
+#ifdef PERFMONITOR
+#include "usec_time.h"
+
+static uint64_t lastUpdateTimeUs = 0;
+uint32_t estimatorLoopTimeUs = 0;
+uint32_t sensorToEstLatencyUs = 0;
+#endif
+
 void estimatorComplementaryInit(void)
 {
   sensfusion6Init();
@@ -41,9 +49,17 @@ void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t 
     #endif
     previousSensorTimestamp = sensorData->gyro.timestamp;
 
+#ifdef PERFMONITOR
+    uint64_t timestamp = usecTimestamp();
+    estimatorLoopTimeUs = (uint32_t)(timestamp - lastUpdateTimeUs);
+    sensorToEstLatencyUs = (uint32_t)(timestamp - sensorData->gyro.timestamp);
+    lastUpdateTimeUs = timestamp; 
+#endif
+
     sensfusion6UpdateQ(sensorData->gyro.data.x, sensorData->gyro.data.y, sensorData->gyro.data.z,
                        sensorData->acc.data.x, sensorData->acc.data.y, sensorData->acc.data.z,
                        dt);
+
     sensfusion6GetEulerRPY(&state->attitude.roll, &state->attitude.pitch, &state->attitude.yaw);
 
     state->acc.z = sensfusion6GetAccZWithoutGravity(sensorData->acc.data.x,

@@ -17,6 +17,18 @@ static attitude_t attitudeDesired;
 static attitude_t rateDesired;
 static float actuatorThrust;
 
+#ifdef PERFMONITOR
+#include "usec_time.h"
+
+static uint64_t lastAttitudeUpdateTimeUs = 0;
+uint32_t attitudePIDLoopTimeUs = 0;
+uint32_t sensorToAttitudePIDLatencyUs = 0;
+
+static uint64_t lastRateUpdateTimeUs = 0;
+uint32_t ratePIDLoopTimeUs = 0;
+uint32_t sensorToRatePIDLatencyUs = 0;
+#endif
+
 void stateControllerInit(void)
 {
   attitudeControllerInit(ATTITUDE_UPDATE_DT);
@@ -64,6 +76,13 @@ void stateController(control_t *control, setpoint_t *setpoint,
       attitudeDesired.pitch = setpoint->attitude.pitch;
     }
 
+#ifdef PERFMONITOR
+    uint64_t timestamp = usecTimestamp();
+    attitudePIDLoopTimeUs = (uint32_t)(timestamp - lastAttitudeUpdateTimeUs);
+    sensorToAttitudePIDLatencyUs = (uint32_t)(timestamp - sensors->gyro.timestamp);
+    lastAttitudeUpdateTimeUs = timestamp;
+#endif
+
     attitudeControllerCorrectAttitudePID(state->attitude.roll, state->attitude.pitch, state->attitude.yaw,
                                 attitudeDesired.roll, attitudeDesired.pitch, attitudeDesired.yaw,
                                 &rateDesired.roll, &rateDesired.pitch, &rateDesired.yaw);
@@ -79,6 +98,13 @@ void stateController(control_t *control, setpoint_t *setpoint,
       rateDesired.pitch = setpoint->attitudeRate.pitch;
       attitudeControllerResetPitchAttitudePID();
     }
+
+#ifdef PERFMONITOR
+    timestamp = usecTimestamp();
+    ratePIDLoopTimeUs = (uint32_t)(timestamp - lastRateUpdateTimeUs);
+    sensorToRatePIDLatencyUs = (uint32_t)(timestamp - sensors->gyro.timestamp);
+    lastRateUpdateTimeUs = timestamp;
+#endif
 
     // TODO: Investigate possibility to subtract gyro drift.
     attitudeControllerCorrectRatePID(sensors->gyro.data.x, -sensors->gyro.data.y, sensors->gyro.data.z,
