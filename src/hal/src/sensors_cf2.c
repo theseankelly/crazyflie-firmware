@@ -53,6 +53,7 @@
 #include "ledseq.h"
 #include "sound.h"
 #include "filter.h"
+#include "log.h"
 
 /**
  * Enable 250Hz digital LPF mode. However does not work with
@@ -109,6 +110,12 @@ static xQueueHandle gyroDataQueue;
 static xQueueHandle magnetometerDataQueue;
 static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
+
+static uint32_t lastSampleTicks;
+static float sampleTimeUs;
+
+static uint32_t lastISRTicks = 0;
+static float isrTimeUs = 0;
 
 static bool isInit = false;
 static sensorData_t sensors;
@@ -202,16 +209,29 @@ static void sensorsTask(void *param)
 
   sensorsSetupSlaveRead();
 
+
+
   while (1)
   {
     if (pdTRUE == xSemaphoreTake(sensorsDataReady, portMAX_DELAY))
     {
+
+      uint32_t tickCount = DWT->CYCCNT;
+      if(tickCount >= lastSampleTicks) {
+        sampleTimeUs = (float)(tickCount - lastSampleTicks) / (float)SystemCoreClock * 1000000.0f;
+      }
+
+      lastSampleTicks = tickCount;
+
       // data is ready to be read
       uint8_t dataLen = (uint8_t) (SENSORS_MPU6500_BUFF_LEN +
               (isMagnetometerPresent ? SENSORS_MAG_BUFF_LEN : 0) +
               (isBarometerPresent ? SENSORS_BARO_BUFF_LEN : 0));
 
+      // Read the acc/gyro and grab the current CPU tick count
       i2cdevRead(I2C3_DEV, MPU6500_ADDRESS_AD0_HIGH, MPU6500_RA_ACCEL_XOUT_H, dataLen, buffer);
+      sensors.gyro.timestamp = DWT->CYCCNT;
+
       // these functions process the respective data and queue it on the output queues
       processAccGyroMeasurements(&(buffer[0]));
       if (isMagnetometerPresent)
@@ -829,6 +849,14 @@ bool sensorsManufacturingTest(void)
 
 void __attribute__((used)) EXTI13_Callback(void)
 {
+  uint32_t tickCount = DWT->CYCCNT;
+
+  if(tickCount >= lastISRTicks)
+  {
+    isrTimeUs = (float)(tickCount - lastISRTicks) / (float)SystemCoreClock * 1000000.0f;
+  }
+  lastISRTicks = tickCount;
+
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
   xSemaphoreGiveFromISR(sensorsDataReady, &xHigherPriorityTaskWoken);
 
@@ -869,6 +897,11 @@ static void applyAxis3fLpf(lpf2pData *data, Axis3f* in)
     in->axis[i] = lpf2pApply(&data[i], in->axis[i]);
   }
 }
+
+LOG_GROUP_START(sensors_profile)
+LOG_ADD(LOG_FLOAT, loopTime, &sampleTimeUs)
+LOG_ADD(LOG_FLOAT, isrTime, &isrTimeUs)
+LOG_GROUP_STOP(sensors_profile)
 
 PARAM_GROUP_START(imu_sensors)
 PARAM_ADD(PARAM_UINT8 | PARAM_RONLY, HMC5883L, &isMagnetometerPresent)

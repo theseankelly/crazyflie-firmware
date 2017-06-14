@@ -54,13 +54,16 @@
    int64_t axis[3];
  } Axis3i64;
 
- typedef union {
-   struct {
-         float x;
-         float y;
-         float z;
+ typedef struct {
+   uint32_t timestamp;
+   union {
+     struct {
+           float x;
+           float y;
+           float z;
+     };
+     float axis[3];
    };
-   float axis[3];
  } Axis3f;
 
 #endif /* IMU_TYPES_H_ */
