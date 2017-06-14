@@ -31,6 +31,7 @@
 #include "system.h"
 #include "log.h"
 #include "param.h"
+#include "usec_time.h"
 
 #include "stabilizer.h"
 
@@ -47,6 +48,10 @@
 static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
+
+static uint64_t stabilizerPrevLoopTimestampUs = 0;
+uint32_t stabilizerLoopTimeUs = 0;
+uint32_t sensorToOutputLatencyUs = 0;
 
 // State variables for the stabilizer
 static setpoint_t setpoint;
@@ -120,8 +125,14 @@ static void stabilizerTask(void* param)
   // Initialize tick to something else then 0
   tick = 1;
 
+  stabilizerPrevLoopTimestampUs = usecTimestamp();
+  
   while(1) {
     vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
+
+    uint64_t loopTimestamp = usecTimestamp();
+    stabilizerLoopTimeUs = (uint32_t)(loopTimestamp - stabilizerPrevLoopTimestampUs);
+    stabilizerPrevLoopTimestampUs = loopTimestamp;
 
     getExtPosition(&state);
     stateEstimator(&state, &sensorData, &control, tick);
@@ -137,8 +148,10 @@ static void stabilizerTask(void* param)
     if (emergencyStop) {
       powerStop();
     } else {
-      powerDistribution(&control);
-    }
+        uint64_t powerDistributionTime = usecTimestamp();
+        sensorToOutputLatencyUs = (uint32_t)(powerDistributionTime - sensorData.gyro.timestamp);
+        powerDistribution(&control);
+      }
 
     tick++;
   }

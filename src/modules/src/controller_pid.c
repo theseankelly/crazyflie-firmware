@@ -9,6 +9,8 @@
 #include "log.h"
 #include "param.h"
 
+#include "usec_time.h"
+
 #define ATTITUDE_UPDATE_DT    (float)(1.0f/ATTITUDE_RATE)
 
 static bool tiltCompensationEnabled = false;
@@ -16,6 +18,15 @@ static bool tiltCompensationEnabled = false;
 static attitude_t attitudeDesired;
 static attitude_t rateDesired;
 static float actuatorThrust;
+
+
+static uint64_t lastAttitudeUpdateTimeUs = 0;
+uint32_t attitudePIDLoopTimeUs = 0;
+uint32_t sensorToAttitudePIDLatencyUs = 0;
+
+static uint64_t lastRateUpdateTimeUs = 0;
+uint32_t ratePIDLoopTimeUs = 0;
+uint32_t sensorToRatePIDLatencyUs = 0;
 
 void stateControllerInit(void)
 {
@@ -37,6 +48,8 @@ void stateController(control_t *control, setpoint_t *setpoint,
                                          const state_t *state,
                                          const uint32_t tick)
 {
+  uint64_t timestamp = 0;
+
   if (RATE_DO_EXECUTE(ATTITUDE_RATE, tick)) {
     // Rate-controled YAW is moving YAW angle setpoint
     if (setpoint->mode.yaw == modeVelocity) {
@@ -64,6 +77,11 @@ void stateController(control_t *control, setpoint_t *setpoint,
       attitudeDesired.pitch = setpoint->attitude.pitch;
     }
 
+    timestamp = usecTimestamp();
+    attitudePIDLoopTimeUs = (uint32_t)(timestamp - lastAttitudeUpdateTimeUs);
+    sensorToAttitudePIDLatencyUs = (uint32_t)(timestamp - sensors->gyro.timestamp);
+    lastAttitudeUpdateTimeUs = timestamp;
+
     attitudeControllerCorrectAttitudePID(state->attitude.roll, state->attitude.pitch, state->attitude.yaw,
                                 attitudeDesired.roll, attitudeDesired.pitch, attitudeDesired.yaw,
                                 &rateDesired.roll, &rateDesired.pitch, &rateDesired.yaw);
@@ -79,6 +97,11 @@ void stateController(control_t *control, setpoint_t *setpoint,
       rateDesired.pitch = setpoint->attitudeRate.pitch;
       attitudeControllerResetPitchAttitudePID();
     }
+
+    timestamp = usecTimestamp();
+    ratePIDLoopTimeUs = (uint32_t)(timestamp - lastRateUpdateTimeUs);
+    sensorToRatePIDLatencyUs = (uint32_t)(timestamp - sensors->gyro.timestamp);
+    lastRateUpdateTimeUs = timestamp;
 
     // TODO: Investigate possibility to subtract gyro drift.
     attitudeControllerCorrectRatePID(sensors->gyro.x, -sensors->gyro.y, sensors->gyro.z,

@@ -4,12 +4,17 @@
 #include "sensfusion6.h"
 #include "position_estimator.h"
 #include "sensors.h"
+#include "usec_time.h"
 
 #define ATTITUDE_UPDATE_RATE RATE_250_HZ
 #define ATTITUDE_UPDATE_DT 1.0/ATTITUDE_UPDATE_RATE
 
 #define POS_UPDATE_RATE RATE_100_HZ
 #define POS_UPDATE_DT 1.0/POS_UPDATE_RATE
+
+static uint64_t lastUpdateTimeUs = 0;
+uint32_t estimatorLoopTimeUs = 0;
+uint32_t sensorToEstLatencyUs = 0;
 
 void estimatorComplementaryInit(void)
 {
@@ -29,6 +34,12 @@ void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t 
 {
   sensorsAcquire(sensorData, tick); // Read sensors at full rate (1000Hz)
   if (RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
+
+    uint64_t timestamp = usecTimestamp();
+    estimatorLoopTimeUs = (uint32_t)(timestamp - lastUpdateTimeUs);
+    sensorToEstLatencyUs = (uint32_t)(timestamp - sensorData->gyro.timestamp);
+    lastUpdateTimeUs = timestamp; 
+    
     sensfusion6UpdateQ(sensorData->gyro.x, sensorData->gyro.y, sensorData->gyro.z,
                        sensorData->acc.x, sensorData->acc.y, sensorData->acc.z,
                        ATTITUDE_UPDATE_DT);

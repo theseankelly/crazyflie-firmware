@@ -17,7 +17,7 @@ CROSS_COMPILE     ?= arm-none-eabi-
 PYTHON2           ?= python2
 DFU_UTIL          ?= dfu-util
 CLOAD             ?= 1
-DEBUG             ?= 0
+DEBUG             ?= 1
 CLOAD_SCRIPT      ?= python3 -m cfloader
 CLOAD_CMDS        ?=
 CLOAD_ARGS        ?=
@@ -162,6 +162,7 @@ PROJ_OBJ_CF2 += libdw1000.o libdw1000Spi.o
 # Modules
 PROJ_OBJ += system.o comm.o console.o pid.o crtpservice.o param.o
 PROJ_OBJ += log.o worker.o trigger.o sitaw.o queuemonitor.o msp.o
+PROJ_OBJ += perfmon.o
 PROJ_OBJ_CF1 += sound_cf1.o sensors_cf1.o mem_cf1.o
 PROJ_OBJ_CF2 += platformservice.o sound_cf2.o extrx.o sysload.o mem_cf2.o
 
