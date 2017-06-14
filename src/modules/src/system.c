@@ -60,6 +60,8 @@
 #include "buzzer.h"
 #include "sound.h"
 #include "sysload.h"
+#include "usec_time.h"
+
 #include "deck.h"
 #include "extrx.h"
 
@@ -113,6 +115,10 @@ void systemInit(void)
   ledseqInit();
   pmInit();
   buzzerInit();
+
+#ifdef PERFMONITOR
+  initUsecTimer();
+#endif
 
   isInit = true;
 }

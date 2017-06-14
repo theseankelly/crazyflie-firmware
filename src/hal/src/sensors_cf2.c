@@ -49,6 +49,7 @@
 #include "ledseq.h"
 #include "sound.h"
 #include "filter.h"
+#include "log.h"
 
 /**
  * Enable 250Hz digital LPF mode. However does not work with
@@ -105,6 +106,12 @@ static xQueueHandle gyroDataQueue;
 static xQueueHandle magnetometerDataQueue;
 static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
+
+#ifdef PERFMONITOR
+#include "usec_time.h"
+static uint64_t lastDataReadyTimeUs = 0;
+uint32_t sensorDataReadyLoopTimeUs = 0;
+#endif
 
 static bool isInit = false;
 static sensorData_t sensors;
@@ -198,16 +205,31 @@ static void sensorsTask(void *param)
 
   sensorsSetupSlaveRead();
 
+
+
   while (1)
   {
     if (pdTRUE == xSemaphoreTake(sensorsDataReady, portMAX_DELAY))
     {
+#ifdef PERFMONITOR
+      // Record the timestamp and save the loop time
+      uint64_t dataReadyTimestamp = usecTimestamp();
+      sensorDataReadyLoopTimeUs = (uint32_t)(dataReadyTimestamp - lastDataReadyTimeUs);
+      lastDataReadyTimeUs = dataReadyTimestamp;
+#endif
+
       // data is ready to be read
       uint8_t dataLen = (uint8_t) (SENSORS_MPU6500_BUFF_LEN +
               (isMagnetometerPresent ? SENSORS_MAG_BUFF_LEN : 0) +
               (isBarometerPresent ? SENSORS_BARO_BUFF_LEN : 0));
 
+      // Read the acc/gyro and grab the current CPU tick count
       i2cdevRead(I2C3_DEV, MPU6500_ADDRESS_AD0_HIGH, MPU6500_RA_ACCEL_XOUT_H, dataLen, buffer);
+
+#ifdef PERFMONITOR
+      sensors.gyro.timestamp = dataReadyTimestamp;
+#endif
+
       // these functions process the respective data and queue it on the output queues
       processAccGyroMeasurements(&(buffer[0]));
       if (isMagnetometerPresent)
