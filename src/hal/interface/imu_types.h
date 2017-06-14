@@ -54,13 +54,18 @@
    int64_t axis[3];
  } Axis3i64;
 
- typedef union {
-   struct {
-         float x;
-         float y;
-         float z;
+ typedef struct {
+#ifdef PERFMONITOR
+   uint64_t timestamp;
+#endif
+   union {
+     struct {
+           float x;
+           float y;
+           float z;
+     };
+     float axis[3];
    };
-   float axis[3];
  } Axis3f;
 
 #endif /* IMU_TYPES_H_ */
