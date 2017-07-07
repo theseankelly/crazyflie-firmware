@@ -26,6 +26,7 @@
 #include <math.h>
 
 #include "FreeRTOS.h"
+#include "semphr.h"
 #include "task.h"
 
 #include "system.h"
@@ -44,6 +45,9 @@
 
 #include "estimator_kalman.h"
 #include "estimator.h"
+
+
+extern xSemaphoreHandle sensorsDataReadComplete;
 
 static bool isInit;
 static bool emergencyStop = false;
@@ -126,34 +130,35 @@ static void stabilizerTask(void* param)
   tick = 1;
 
   stabilizerPrevLoopTimestampUs = usecTimestamp();
-  
+
   while(1) {
-    vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
+    if (pdTRUE == xSemaphoreTake(sensorsDataReadComplete, portMAX_DELAY)) {
 
-    uint64_t loopTimestamp = usecTimestamp();
-    stabilizerLoopTimeUs = (uint32_t)(loopTimestamp - stabilizerPrevLoopTimestampUs);
-    stabilizerPrevLoopTimestampUs = loopTimestamp;
+      uint64_t loopTimestamp = usecTimestamp();
+      stabilizerLoopTimeUs = (uint32_t)(loopTimestamp - stabilizerPrevLoopTimestampUs);
+      stabilizerPrevLoopTimestampUs = loopTimestamp;
 
-    getExtPosition(&state);
-    stateEstimator(&state, &sensorData, &control, tick);
+      getExtPosition(&state);
+      stateEstimator(&state, &sensorData, &control, tick);
 
-    commanderGetSetpoint(&setpoint, &state);
+      commanderGetSetpoint(&setpoint, &state);
 
-    sitAwUpdateSetpoint(&setpoint, &sensorData, &state);
+      sitAwUpdateSetpoint(&setpoint, &sensorData, &state);
 
-    stateController(&control, &setpoint, &sensorData, &state, tick);
+      stateController(&control, &setpoint, &sensorData, &state, tick);
 
-    checkEmergencyStopTimeout();
+      checkEmergencyStopTimeout();
 
-    if (emergencyStop) {
-      powerStop();
-    } else {
+      if (emergencyStop) {
+        powerStop();
+      } else {
         uint64_t powerDistributionTime = usecTimestamp();
         sensorToOutputLatencyUs = (uint32_t)(powerDistributionTime - sensorData.gyro.timestamp);
         powerDistribution(&control);
       }
 
-    tick++;
+      tick++;
+    }
   }
 }
 
