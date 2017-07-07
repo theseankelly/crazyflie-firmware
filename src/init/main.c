@@ -46,10 +46,6 @@ int main()
 {
   //Initialize the platform.
   platformInit();
-
-  DWT->CYCCNT = 0;
-  DWT->CTRL |= 0x1;
-
   //Launch the system task that will initialize and start everything
   systemLaunch();
 

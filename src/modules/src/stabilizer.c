@@ -31,6 +31,7 @@
 #include "system.h"
 #include "log.h"
 #include "param.h"
+#include "usec_time.h"
 
 #include "stabilizer.h"
 
@@ -54,11 +55,10 @@ static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
 
-static uint32_t dataToOutputLatencyTicks = 0;
-static float dataToOutputLatencyUs = 0;
+static uint32_t dataToOutputLatencyUs = 0;
 
-static uint32_t stabilizerPrevLoopTimestampTicks = 0;
-static float stabilizerLoopTimeUs = 0;
+static uint64_t stabilizerPrevLoopTimestampUs = 0;
+static uint32_t stabilizerLoopTimeUs = 0;
 
 // State variables for the stabilizer
 static setpoint_t setpoint;
@@ -132,20 +132,14 @@ static void stabilizerTask(void* param)
   // Initialize tick to something else then 0
   tick = 1;
 
-  stabilizerPrevLoopTimestampTicks = DWT->CYCCNT;
-
+  stabilizerPrevLoopTimestampUs = usecTimestamp();
+  
   while(1) {
     vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
 
-    uint32_t loopTimestamp = DWT->CYCCNT;
-
-    // If there was no overflow, update the telemetry variable
-    if (loopTimestamp >= stabilizerPrevLoopTimestampTicks) {
-      stabilizerLoopTimeUs = (float)(loopTimestamp - stabilizerPrevLoopTimestampTicks) / (float)SystemCoreClock * 1000000.0f;
-    }
-
-    stabilizerPrevLoopTimestampTicks = loopTimestamp;
-
+    uint64_t loopTimestamp = usecTimestamp();
+    stabilizerLoopTimeUs = (uint32_t)(loopTimestamp - stabilizerPrevLoopTimestampUs);
+    stabilizerPrevLoopTimestampUs = loopTimestamp;
 
     getExtPosition(&state);
 #ifdef ESTIMATOR_TYPE_kalman
@@ -166,16 +160,10 @@ static void stabilizerTask(void* param)
     if (emergencyStop) {
       powerStop();
     } else {
-
-      uint32_t powerDistributionTime = DWT->CYCCNT;
-
-      if(powerDistributionTime >= sensorData.gyro.timestamp) {
-        dataToOutputLatencyTicks = powerDistributionTime - sensorData.gyro.timestamp;
-        dataToOutputLatencyUs = (float)dataToOutputLatencyTicks / (float)SystemCoreClock * 1000000.0f;
+        uint64_t powerDistributionTime = usecTimestamp();
+        dataToOutputLatencyUs = (uint32_t)(powerDistributionTime - sensorData.gyro.timestamp);
+        powerDistribution(&control);
       }
-
-      powerDistribution(&control);
-    }
 
     tick++;
   }
@@ -211,9 +199,8 @@ LOG_ADD(LOG_UINT16, thrust, &control.thrust)
 LOG_GROUP_STOP(stabilizer)
 
 LOG_GROUP_START(stabProfile)
-LOG_ADD(LOG_UINT32, latencyTicks, &dataToOutputLatencyTicks)
-LOG_ADD(LOG_FLOAT, latencyUs, &dataToOutputLatencyUs)
-LOG_ADD(LOG_FLOAT, loopTimeUs, &stabilizerLoopTimeUs)
+LOG_ADD(LOG_UINT32, latencyUs, &dataToOutputLatencyUs)
+LOG_ADD(LOG_UINT32, loopTimeUs, &stabilizerLoopTimeUs)
 LOG_GROUP_STOP(stabProfile)
 
 LOG_GROUP_START(acc)

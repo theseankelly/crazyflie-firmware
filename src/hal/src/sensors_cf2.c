@@ -54,6 +54,7 @@
 #include "sound.h"
 #include "filter.h"
 #include "log.h"
+#include "usec_time.h"
 
 /**
  * Enable 250Hz digital LPF mode. However does not work with
@@ -111,11 +112,13 @@ static xQueueHandle magnetometerDataQueue;
 static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
 
-static uint32_t lastSampleTicks;
-static float sampleTimeUs;
 
-static uint32_t lastISRTicks = 0;
-static float isrTimeUs = 0;
+
+static uint64_t lastDataReadyTimeUs = 0;
+static uint32_t dataReadyDeltaTimeUs = 0;
+
+static uint64_t lastIsrTimeUs = 0;
+static uint32_t isrDeltaTimeUs = 0;
 
 static bool isInit = false;
 static sensorData_t sensors;
@@ -215,13 +218,10 @@ static void sensorsTask(void *param)
   {
     if (pdTRUE == xSemaphoreTake(sensorsDataReady, portMAX_DELAY))
     {
-
-      uint32_t tickCount = DWT->CYCCNT;
-      if(tickCount >= lastSampleTicks) {
-        sampleTimeUs = (float)(tickCount - lastSampleTicks) / (float)SystemCoreClock * 1000000.0f;
-      }
-
-      lastSampleTicks = tickCount;
+      // Record the timestamp and save the loop time
+      uint64_t dataReadyTimestamp = usecTimestamp();
+      dataReadyDeltaTimeUs = (uint32_t)(dataReadyTimestamp - lastDataReadyTimeUs);
+      lastDataReadyTimeUs = dataReadyTimestamp;
 
       // data is ready to be read
       uint8_t dataLen = (uint8_t) (SENSORS_MPU6500_BUFF_LEN +
@@ -230,7 +230,7 @@ static void sensorsTask(void *param)
 
       // Read the acc/gyro and grab the current CPU tick count
       i2cdevRead(I2C3_DEV, MPU6500_ADDRESS_AD0_HIGH, MPU6500_RA_ACCEL_XOUT_H, dataLen, buffer);
-      sensors.gyro.timestamp = DWT->CYCCNT;
+      sensors.gyro.timestamp = dataReadyTimestamp;
 
       // these functions process the respective data and queue it on the output queues
       processAccGyroMeasurements(&(buffer[0]));
@@ -849,13 +849,9 @@ bool sensorsManufacturingTest(void)
 
 void __attribute__((used)) EXTI13_Callback(void)
 {
-  uint32_t tickCount = DWT->CYCCNT;
-
-  if(tickCount >= lastISRTicks)
-  {
-    isrTimeUs = (float)(tickCount - lastISRTicks) / (float)SystemCoreClock * 1000000.0f;
-  }
-  lastISRTicks = tickCount;
+  uint64_t isrTimestamp = usecTimestamp();
+  isrDeltaTimeUs = (uint32_t)(lastIsrTimeUs - isrTimestamp);
+  lastIsrTimeUs = isrTimestamp;
 
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
   xSemaphoreGiveFromISR(sensorsDataReady, &xHigherPriorityTaskWoken);
@@ -899,8 +895,8 @@ static void applyAxis3fLpf(lpf2pData *data, Axis3f* in)
 }
 
 LOG_GROUP_START(sensors_profile)
-LOG_ADD(LOG_FLOAT, loopTime, &sampleTimeUs)
-LOG_ADD(LOG_FLOAT, isrTime, &isrTimeUs)
+LOG_ADD(LOG_UINT32, loopTime, &dataReadyDeltaTimeUs)
+LOG_ADD(LOG_UINT32, isrTime, &isrDeltaTimeUs)
 LOG_GROUP_STOP(sensors_profile)
 
 PARAM_GROUP_START(imu_sensors)

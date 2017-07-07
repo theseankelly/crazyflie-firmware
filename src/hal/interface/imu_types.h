@@ -55,7 +55,7 @@
  } Axis3i64;
 
  typedef struct {
-   uint32_t timestamp;
+   uint64_t timestamp;
    union {
      struct {
            float x;
