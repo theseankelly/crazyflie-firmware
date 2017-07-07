@@ -112,6 +112,7 @@ static xQueueHandle magnetometerDataQueue;
 static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
 
+xSemaphoreHandle sensorsDataReadComplete;
 
 
 static uint64_t lastDataReadyTimeUs = 0;
@@ -256,6 +257,8 @@ static void sensorsTask(void *param)
         xQueueOverwrite(barometerDataQueue, &sensors.baro);
       }
       xTaskResumeAll();
+
+      xSemaphoreGive(sensorsDataReadComplete);
     }
   }
 }
@@ -534,6 +537,7 @@ void sensorsInit(void)
   }
 
   sensorsDataReady = xSemaphoreCreateBinary();
+  sensorsDataReadComplete = xSemaphoreCreateBinary();
 
   sensorsBiasObjInit(&gyroBiasRunning);
   sensorsDeviceInit();
