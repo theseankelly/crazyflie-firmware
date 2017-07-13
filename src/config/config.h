@@ -75,8 +75,8 @@
 
 
 // Task priorities. Higher number higher priority
-#define STABILIZER_TASK_PRI     5
-#define SENSORS_TASK_PRI        6
+#define STABILIZER_TASK_PRI     4
+#define SENSORS_TASK_PRI        4
 #define ADC_TASK_PRI            3
 #define SYSTEM_TASK_PRI         2
 #define CRTP_TX_TASK_PRI        2
@@ -92,7 +92,7 @@
 #define USDWRITE_TASK_PRI       0
 
 #ifdef PLATFORM_CF2
-  #define SYSLINK_TASK_PRI        4
+  #define SYSLINK_TASK_PRI        5
   #define USBLINK_TASK_PRI        3
 #endif
 
