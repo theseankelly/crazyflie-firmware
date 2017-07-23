@@ -59,7 +59,6 @@ static uint8_t *outDataIsr;
 static uint8_t dataIndexIsr;
 static uint8_t dataSizeIsr;
 static bool    isUartDmaInitialized;
-static DMA_InitTypeDef DMA_InitStructureShare;
 static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
@@ -74,30 +73,46 @@ static void uartslkResumeDma();
 void uartslkDmaInit(void)
 {
   NVIC_InitTypeDef NVIC_InitStructure;
+  DMA_InitTypeDef DMA_InitStructure;
 
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA2, ENABLE);
 
-  // USART TX DMA Channel Config
-  DMA_InitStructureShare.DMA_PeripheralBaseAddr = (uint32_t)&UARTSLK_TYPE->DR;
-  DMA_InitStructureShare.DMA_Memory0BaseAddr = (uint32_t)dmaBuffer;
-  DMA_InitStructureShare.DMA_MemoryInc = DMA_MemoryInc_Enable;
-  DMA_InitStructureShare.DMA_MemoryBurst = DMA_MemoryBurst_Single;
-  DMA_InitStructureShare.DMA_MemoryDataSize = DMA_MemoryDataSize_Byte;
-  DMA_InitStructureShare.DMA_BufferSize = 0;
-  DMA_InitStructureShare.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
-  DMA_InitStructureShare.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
-  DMA_InitStructureShare.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
-  DMA_InitStructureShare.DMA_DIR = DMA_DIR_MemoryToPeripheral;
-  DMA_InitStructureShare.DMA_Mode = DMA_Mode_Normal;
-  DMA_InitStructureShare.DMA_Priority = DMA_Priority_High;
-  DMA_InitStructureShare.DMA_FIFOMode = DMA_FIFOMode_Disable;
-  DMA_InitStructureShare.DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull ;
-  DMA_InitStructureShare.DMA_Channel = UARTSLK_DMA_CH;
+  // USART DMA Channel Config
+  DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&UARTSLK_TYPE->DR;
+  DMA_InitStructure.DMA_MemoryInc = DMA_MemoryInc_Enable;
+  DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
+  DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_Byte;
+  DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+  DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
+  DMA_InitStructure.DMA_PeripheralBurst = DMA_PeripheralBurst_Single;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Normal;
+  DMA_InitStructure.DMA_Priority = DMA_Priority_High;
+  DMA_InitStructure.DMA_FIFOMode = DMA_FIFOMode_Disable;
+  DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull;
+  DMA_InitStructure.DMA_Memory0BaseAddr = 0; // Set seperately for Rx/Tx
+  DMA_InitStructure.DMA_BufferSize = 0; // Set seperately for Rx/Tx
 
-  NVIC_InitStructure.NVIC_IRQChannel = UARTSLK_DMA_IRQ;
+  // Configure TX DMA
+  DMA_InitStructure.DMA_Channel = UARTSLK_TX_DMA_CH;
+  DMA_InitStructure.DMA_DIR = DMA_DIR_MemoryToPeripheral;
+  DMA_Cmd(UARTSLK_TX_DMA_STREAM, DISABLE);
+  DMA_Init(UARTSLK_TX_DMA_STREAM, &DMA_InitStructure);
+
+  // Configure RX DMA
+  DMA_InitStructure.DMA_Channel = UARTSLK_RX_DMA_CH;
+  DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+  DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
+  DMA_Init(UARTSLK_RX_DMA_STREAM, &DMA_InitStructure);
+  
+  // Configure interrupts 
   NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = NVIC_HIGH_PRI;
   NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  
+  NVIC_InitStructure.NVIC_IRQChannel = UARTSLK_TX_DMA_IRQ;
+  NVIC_Init(&NVIC_InitStructure);
+  
+  NVIC_InitStructure.NVIC_IRQChannel = UARTSLK_RX_DMA_IRQ;
   NVIC_Init(&NVIC_InitStructure);
 
   isUartDmaInitialized = true;
@@ -245,21 +260,23 @@ void uartslkSendDataDmaBlocking(uint32_t size, uint8_t* data)
   {
     xSemaphoreTake(uartBusy, portMAX_DELAY);
     // Wait for DMA to be free
-    while(DMA_GetCmdStatus(UARTSLK_DMA_STREAM) != DISABLE);
-    //Copy data in DMA buffer
-    memcpy(dmaBuffer, data, size);
-    DMA_InitStructureShare.DMA_BufferSize = size;
+    while(DMA_GetCmdStatus(UARTSLK_TX_DMA_STREAM) != DISABLE);
+
+    // Set the Tx buffer to the data
+    UARTSLK_TX_DMA_STREAM->M0AR = (uint32_t)&data[0];
+    UARTSLK_TX_DMA_STREAM->NDTR = size; 
     initialDMACount = size;
-    // Init new DMA stream
-    DMA_Init(UARTSLK_DMA_STREAM, &DMA_InitStructureShare);
+
     // Enable the Transfer Complete interrupt
-    DMA_ITConfig(UARTSLK_DMA_STREAM, DMA_IT_TC, ENABLE);
+    DMA_ITConfig(UARTSLK_TX_DMA_STREAM, DMA_IT_TC, ENABLE);
+    /* Clear DMA flags */
+    DMA_ClearFlag(UARTSLK_TX_DMA_STREAM, UARTSLK_TX_DMA_ALL_FLAGS);
     /* Enable USART DMA TX Requests */
     USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Tx, ENABLE);
     /* Clear transfer complete */
     USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
     /* Enable DMA USART TX Stream */
-    DMA_Cmd(UARTSLK_DMA_STREAM, ENABLE);
+    DMA_Cmd(UARTSLK_TX_DMA_STREAM, ENABLE);
     xSemaphoreTake(waitUntilSendDone, portMAX_DELAY);
     xSemaphoreGive(uartBusy);
   }
@@ -267,18 +284,18 @@ void uartslkSendDataDmaBlocking(uint32_t size, uint8_t* data)
 
 static void uartslkPauseDma()
 {
-  if (DMA_GetCmdStatus(UARTSLK_DMA_STREAM) == ENABLE)
+  if (DMA_GetCmdStatus(UARTSLK_TX_DMA_STREAM) == ENABLE)
   {
     // Disable transfer complete interrupt
-    DMA_ITConfig(UARTSLK_DMA_STREAM, DMA_IT_TC, DISABLE);
+    DMA_ITConfig(UARTSLK_TX_DMA_STREAM, DMA_IT_TC, DISABLE);
     // Disable stream to pause it
-    DMA_Cmd(UARTSLK_DMA_STREAM, DISABLE);
+    DMA_Cmd(UARTSLK_TX_DMA_STREAM, DISABLE);
     // Wait for it to be disabled
-    while(DMA_GetCmdStatus(UARTSLK_DMA_STREAM) != DISABLE);
+    while(DMA_GetCmdStatus(UARTSLK_TX_DMA_STREAM) != DISABLE);
     // Disable transfer complete
-    DMA_ClearITPendingBit(UARTSLK_DMA_STREAM, UARTSLK_DMA_FLAG_TCIF);
+    DMA_ClearITPendingBit(UARTSLK_TX_DMA_STREAM, UARTSLK_TX_DMA_FLAG_TCIF);
     // Read remaining data count
-    remainingDMACount = DMA_GetCurrDataCounter(UARTSLK_DMA_STREAM);
+    remainingDMACount = DMA_GetCurrDataCounter(UARTSLK_TX_DMA_STREAM);
     dmaIsPaused = true;
   }
 }
@@ -288,15 +305,15 @@ static void uartslkResumeDma()
   if (dmaIsPaused)
   {
     // Update DMA counter
-    DMA_SetCurrDataCounter(UARTSLK_DMA_STREAM, remainingDMACount);
+    DMA_SetCurrDataCounter(UARTSLK_TX_DMA_STREAM, remainingDMACount);
     // Update memory read address
-    UARTSLK_DMA_STREAM->M0AR = (uint32_t)&dmaBuffer[initialDMACount - remainingDMACount];
+    UARTSLK_TX_DMA_STREAM->M0AR = (uint32_t)&dmaBuffer[initialDMACount - remainingDMACount];
     // Enable the Transfer Complete interrupt
-    DMA_ITConfig(UARTSLK_DMA_STREAM, DMA_IT_TC, ENABLE);
+    DMA_ITConfig(UARTSLK_TX_DMA_STREAM, DMA_IT_TC, ENABLE);
     /* Clear transfer complete */
     USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
     /* Enable DMA USART TX Stream */
-    DMA_Cmd(UARTSLK_DMA_STREAM, ENABLE);
+    DMA_Cmd(UARTSLK_TX_DMA_STREAM, ENABLE);
     dmaIsPaused = false;
   }
 }
@@ -306,10 +323,10 @@ void uartslkDmaIsr(void)
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
   // Stop and cleanup DMA stream
-  DMA_ITConfig(UARTSLK_DMA_STREAM, DMA_IT_TC, DISABLE);
-  DMA_ClearITPendingBit(UARTSLK_DMA_STREAM, UARTSLK_DMA_FLAG_TCIF);
+  DMA_ITConfig(UARTSLK_TX_DMA_STREAM, DMA_IT_TC, DISABLE);
+  DMA_ClearITPendingBit(UARTSLK_TX_DMA_STREAM, UARTSLK_TX_DMA_FLAG_TCIF);
   USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Tx, DISABLE);
-  DMA_Cmd(UARTSLK_DMA_STREAM, DISABLE);
+  DMA_Cmd(UARTSLK_TX_DMA_STREAM, DISABLE);
 
   remainingDMACount = 0;
   xSemaphoreGiveFromISR(waitUntilSendDone, &xHigherPriorityTaskWoken);

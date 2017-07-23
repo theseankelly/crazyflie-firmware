@@ -36,11 +36,21 @@
 #define ENABLE_UARTSLK_RCC       RCC_APB2PeriphClockCmd
 #define UARTSLK_IRQ              USART6_IRQn
 
-#define UARTSLK_DMA_IRQ          DMA2_Stream7_IRQn
-#define UARTSLK_DMA_IT_TC        DMA_IT_TC
-#define UARTSLK_DMA_STREAM       DMA2_Stream7
-#define UARTSLK_DMA_CH           DMA_Channel_5
-#define UARTSLK_DMA_FLAG_TCIF    DMA_FLAG_TCIF7
+#define UARTSLK_TX_DMA_IRQ       DMA2_Stream7_IRQn
+#define UARTSLK_TX_DMA_IT_TC     DMA_IT_TC
+#define UARTSLK_TX_DMA_STREAM    DMA2_Stream7
+#define UARTSLK_TX_DMA_CH        DMA_Channel_5
+#define UARTSLK_TX_DMA_FLAG_TCIF DMA_FLAG_TCIF7
+#define UARTSLK_TX_DMA_ALL_FLAGS (DMA_FLAG_FEIF7 | DMA_FLAG_DMEIF7 | \
+                                  DMA_FLAG_TEIF7 | DMA_FLAG_HTIF7 | DMA_FLAG_TCIF7 )
+
+#define UARTSLK_RX_DMA_IRQ       DMA2_Stream1_IRQn
+#define UARTSLK_RX_DMA_IT_TC     DMA_IT_TC
+#define UARTSLK_RX_DMA_STREAM    DMA2_Stream1
+#define UARTSLK_RX_DMA_CH        DMA_Channel_5
+#define UARTSLK_RX_DMA_FLAG_TCIF DMA_FLAG_TCIF1
+#define UARTSLK_RX_DMA_ALL_FLAGS (DMA_FLAG_FEIF1 | DMA_FLAG_DMEIF1 | \
+                                  DMA_FLAG_TEIF1 | DMA_FLAG_HTIF1 | DMA_FLAG_TCIF1 )
 
 #define UARTSLK_GPIO_PERIF       RCC_AHB1Periph_GPIOC
 #define UARTSLK_GPIO_PORT        GPIOC
