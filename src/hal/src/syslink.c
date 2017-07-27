@@ -60,12 +60,21 @@ static void syslinkTask(void *param)
   uint8_t dataIndex = 0;
   uint8_t cksum[2] = {0};
   uint8_t counter = 0;
+  uint8_t done = 0;
+  uint32_t actualSize;
 
+  uint8_t rxBuffer[(sizeof(SyslinkPacket) + 4)];
   while(1)
   {
-    if (uartslkGetDataWithTimout(&c))
+    memset(rxBuffer, 0, sizeof(rxBuffer));
+    uartslkGetDataDmaBlocking(sizeof(rxBuffer), rxBuffer, &actualSize);
+
+    rxState = waitForFirstStart;
+    counter = 0;
+    done = 0;
+    while(counter < sizeof(rxBuffer) && done == 0)
     {
-      counter++;
+      c = rxBuffer[counter];
       switch(rxState)
       {
         case waitForFirstStart:
@@ -84,6 +93,12 @@ static void syslinkTask(void *param)
           if (c <= SYSLINK_MTU)
           {
             slp.length = c;
+
+            if (actualSize != slp.length + 6)
+            {
+              rxState = waitForFirstStart;
+            }
+
             cksum[0] += c;
             cksum[1] += cksum[0];
             dataIndex = 0;
@@ -112,18 +127,19 @@ static void syslinkTask(void *param)
           else
           {
             rxState = waitForFirstStart; //Checksum error
-            IF_DEBUG_ASSERT(1);
+            //IF_DEBUG_ASSERT(1);
           }
           break;
         case waitForChksum2:
           if (cksum[1] == c)
           {
             syslinkRouteIncommingPacket(&slp);
+            done = 1;
           }
           else
           {
             rxState = waitForFirstStart; //Checksum error
-            IF_DEBUG_ASSERT(1);
+            //IF_DEBUG_ASSERT(1);
           }
           rxState = waitForFirstStart;
           break;
@@ -131,11 +147,7 @@ static void syslinkTask(void *param)
           ASSERT(0);
           break;
       }
-    }
-    else
-    {
-      // Timeout
-      rxState = waitForFirstStart;
+      counter++;
     }
   }
 }

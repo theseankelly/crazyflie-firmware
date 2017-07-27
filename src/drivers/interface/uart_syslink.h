@@ -96,6 +96,17 @@ struct crtpLinkOperations * uartslkGetLink();
 bool uartslkGetDataWithTimout(uint8_t *c);
 
 /**
+ * Gets raw data using DMA transfer. Should be used from
+ * exception functions and for debugging when a lot of data
+ * should be transfered.
+ * @param[in] size  Number of bytes to send
+ * @param[in] data  Pointer to data
+ *
+ * @note If UART Crtp link is activated this function does nothing
+ */
+void uartslkGetDataDmaBlocking(uint32_t size, uint8_t* data, uint32_t* pActualSize);
+
+/**
  * Sends raw data using a lock. Should be used from
  * exception functions and for debugging when a lot of data
  * should be transfered.

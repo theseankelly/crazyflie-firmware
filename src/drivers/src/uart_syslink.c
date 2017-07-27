@@ -51,7 +51,9 @@
 static bool isInit = false;
 
 static xSemaphoreHandle waitUntilSendDone;
-static xSemaphoreHandle uartBusy;
+static xSemaphoreHandle waitUntilReceiveDone;
+static xSemaphoreHandle uartTxBusy;
+static xSemaphoreHandle uartRxBusy;
 static xQueueHandle uartslkDataDelivery;
 
 static uint8_t dmaBuffer[64];
@@ -62,6 +64,9 @@ static bool    isUartDmaInitialized;
 static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
+
+// for debug
+volatile uint32_t dataRemainingAfterTransfer;
 
 static void uartslkPauseDma();
 static void uartslkResumeDma();
@@ -122,8 +127,11 @@ void uartslkInit(void)
 {
   // initialize the FreeRTOS structures first, to prevent null pointers in interrupts
   waitUntilSendDone = xSemaphoreCreateBinary(); // initialized as blocking
-  uartBusy = xSemaphoreCreateBinary(); // initialized as blocking
-  xSemaphoreGive(uartBusy); // but we give it because the uart isn't busy at initialization
+  waitUntilReceiveDone = xSemaphoreCreateBinary(); // initialized as blocking
+  uartTxBusy = xSemaphoreCreateBinary(); // initialized as blocking
+  uartRxBusy = xSemaphoreCreateBinary(); // initialized as blocking
+  xSemaphoreGive(uartTxBusy); // but we give it because the uart isn't busy at initialization
+  xSemaphoreGive(uartRxBusy); // but we give it because the uart isn't busy at initialization
 
   uartslkDataDelivery = xQueueCreate(1024, sizeof(uint8_t));
   DEBUG_QUEUE_MONITOR_REGISTER(uartslkDataDelivery);
@@ -176,7 +184,7 @@ void uartslkInit(void)
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
 
-  USART_ITConfig(UARTSLK_TYPE, USART_IT_RXNE, ENABLE);
+  USART_ITConfig(UARTSLK_TYPE, USART_IT_IDLE, ENABLE);
 
   //Setting up TXEN pin (NRF flow control)
   RCC_AHB1PeriphClockCmd(UARTSLK_TXEN_PERIF, ENABLE);
@@ -236,7 +244,7 @@ void uartslkSendData(uint32_t size, uint8_t* data)
 
 void uartslkSendDataIsrBlocking(uint32_t size, uint8_t* data)
 {
-  xSemaphoreTake(uartBusy, portMAX_DELAY);
+  xSemaphoreTake(uartTxBusy, portMAX_DELAY);
   outDataIsr = data;
   dataSizeIsr = size;
   dataIndexIsr = 1;
@@ -244,7 +252,7 @@ void uartslkSendDataIsrBlocking(uint32_t size, uint8_t* data)
   USART_ITConfig(UARTSLK_TYPE, USART_IT_TXE, ENABLE);
   xSemaphoreTake(waitUntilSendDone, portMAX_DELAY);
   outDataIsr = 0;
-  xSemaphoreGive(uartBusy);
+  xSemaphoreGive(uartTxBusy);
 }
 
 int uartslkPutchar(int ch)
@@ -254,11 +262,41 @@ int uartslkPutchar(int ch)
     return (unsigned char)ch;
 }
 
+void uartslkGetDataDmaBlocking(uint32_t size, uint8_t* data, uint32_t *pActualSize)
+{
+  if (isUartDmaInitialized)
+  {
+    xSemaphoreTake(uartRxBusy, portMAX_DELAY);
+    // Wait for DMA to be free
+    while(DMA_GetCmdStatus(UARTSLK_RX_DMA_STREAM) != DISABLE);
+
+    // Set the Rx buffer to the data
+    UARTSLK_RX_DMA_STREAM->M0AR = (uint32_t)&data[0];
+    UARTSLK_RX_DMA_STREAM->NDTR = size; 
+
+    // Enable the Transfer Complete interrupt
+    DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, ENABLE);
+    /* Clear DMA flags */
+    DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
+    /* Enable USART DMA RX Requests */
+    USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, ENABLE);
+    /* Clear transfer complete */
+    //USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
+    /* Enable DMA USART TX Stream */
+    DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
+    xSemaphoreTake(waitUntilReceiveDone, portMAX_DELAY);
+
+    *pActualSize = (size - dataRemainingAfterTransfer);
+
+    xSemaphoreGive(uartRxBusy);
+  }
+}
+
 void uartslkSendDataDmaBlocking(uint32_t size, uint8_t* data)
 {
   if (isUartDmaInitialized)
   {
-    xSemaphoreTake(uartBusy, portMAX_DELAY);
+    xSemaphoreTake(uartTxBusy, portMAX_DELAY);
     // Wait for DMA to be free
     while(DMA_GetCmdStatus(UARTSLK_TX_DMA_STREAM) != DISABLE);
 
@@ -278,7 +316,7 @@ void uartslkSendDataDmaBlocking(uint32_t size, uint8_t* data)
     /* Enable DMA USART TX Stream */
     DMA_Cmd(UARTSLK_TX_DMA_STREAM, ENABLE);
     xSemaphoreTake(waitUntilSendDone, portMAX_DELAY);
-    xSemaphoreGive(uartBusy);
+    xSemaphoreGive(uartTxBusy);
   }
 }
 
@@ -318,7 +356,7 @@ static void uartslkResumeDma()
   }
 }
 
-void uartslkDmaIsr(void)
+void uartslkDmaTxIsr(void)
 {
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
@@ -332,18 +370,39 @@ void uartslkDmaIsr(void)
   xSemaphoreGiveFromISR(waitUntilSendDone, &xHigherPriorityTaskWoken);
 }
 
+void uartslkDmaRxIsr(void)
+{
+  portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+
+  // Grab the remaining count in NDTR before clearing
+  dataRemainingAfterTransfer = UARTSLK_RX_DMA_STREAM->NDTR;
+
+  // Stop and cleanup DMA stream
+  DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, DISABLE);
+  DMA_ClearITPendingBit(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_FLAG_TCIF);
+  USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, DISABLE);
+  DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
+
+  xSemaphoreGiveFromISR(waitUntilReceiveDone, &xHigherPriorityTaskWoken);
+}
+
 void uartslkIsr(void)
 {
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
   // the following if statement replaces:
-  //   if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_RXNE) == SET)
+  //   if (USART_GekktITStatus(UARTSLK_TYPE, USART_IT_RXNE) == SET)
   // we do this check as fast as possible to minimize the chance of an overrun,
   // which occasionally cause problems and cause packet loss at high CPU usage
   if ((UARTSLK_TYPE->SR & (1<<5)) != 0) // if the RXNE interrupt has occurred
   {
     uint8_t rxDataInterrupt = (uint8_t)(UARTSLK_TYPE->DR & 0xFF);
     xQueueSendFromISR(uartslkDataDelivery, &rxDataInterrupt, &xHigherPriorityTaskWoken);
+  }
+  else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_IDLE) == SET)
+  {
+    USART_ReceiveData(UARTSLK_TYPE);
+    DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
   }
   else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_TXE) == SET)
   {
@@ -397,5 +456,10 @@ void __attribute__((used)) USART6_IRQHandler(void)
 
 void __attribute__((used)) DMA2_Stream7_IRQHandler(void)
 {
-  uartslkDmaIsr();
+  uartslkDmaTxIsr();
+}
+
+void __attribute__((used)) DMA2_Stream1_IRQHandler(void)
+{
+  uartslkDmaRxIsr();
 }
