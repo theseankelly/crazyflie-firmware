@@ -61,18 +61,23 @@ static void syslinkTask(void *param)
   uint8_t cksum[2] = {0};
   uint8_t counter = 0;
   uint8_t done = 0;
-  uint32_t actualSize;
+  uint32_t bytesReceived;
 
-  uint8_t rxBuffer[(sizeof(SyslinkPacket) + 4)];
+  uint32_t lastWakeTime = xTaskGetTickCount(); 
+  uint8_t rxBuffer[200];
   while(1)
   {
+    vTaskDelayUntil(&lastWakeTime, F2T(1000));
+ 
+    // this shouldn't be necessary, but zero it for debug.
     memset(rxBuffer, 0, sizeof(rxBuffer));
-    uartslkGetDataDmaBlocking(sizeof(rxBuffer), rxBuffer, &actualSize);
+//    uartslkGetDataDmaBlocking(sizeof(rxBuffer), rxBuffer, &actualSize);
 
-    rxState = waitForFirstStart;
+    uartslkGetAvailableData(200, rxBuffer, &bytesReceived);
+
     counter = 0;
     done = 0;
-    while(counter < sizeof(rxBuffer) && done == 0)
+    while(counter < bytesReceived && done == 0)
     {
       c = rxBuffer[counter];
       switch(rxState)
@@ -93,11 +98,6 @@ static void syslinkTask(void *param)
           if (c <= SYSLINK_MTU)
           {
             slp.length = c;
-
-            if (actualSize != slp.length + 6)
-            {
-              rxState = waitForFirstStart;
-            }
 
             cksum[0] += c;
             cksum[1] += cksum[0];

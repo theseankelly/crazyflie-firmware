@@ -65,6 +65,15 @@ static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
+#define RX_FIFO_SIZE 200
+uint8_t RxFifo[RX_FIFO_SIZE];
+uint8_t RxFifoHead = 0;
+uint8_t RxFifoTail = 0;
+
+#define CLIENT_BUFFER_SIZE 200
+uint8_t ClientBuffer[CLIENT_BUFFER_SIZE];
+uint8_t ClientBufferIndex = 0;
+
 // for debug
 volatile uint32_t dataRemainingAfterTransfer;
 
@@ -106,6 +115,9 @@ void uartslkDmaInit(void)
   // Configure RX DMA
   DMA_InitStructure.DMA_Channel = UARTSLK_RX_DMA_CH;
   DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
+  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)RxFifo;
+  DMA_InitStructure.DMA_BufferSize = RX_FIFO_SIZE;
   DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
   DMA_Init(UARTSLK_RX_DMA_STREAM, &DMA_InitStructure);
   
@@ -184,7 +196,8 @@ void uartslkInit(void)
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
 
-  USART_ITConfig(UARTSLK_TYPE, USART_IT_IDLE, ENABLE);
+  //USART_ITConfig(UARTSLK_TYPE, USART_IT_RXNE, ENABLE);
+  //USART_ITConfig(USARSLK_TYPE, USART_IT_IDLE, ENABLE);
 
   //Setting up TXEN pin (NRF flow control)
   RCC_AHB1PeriphClockCmd(UARTSLK_TXEN_PERIF, ENABLE);
@@ -203,6 +216,17 @@ void uartslkInit(void)
   EXTI_ClearITPendingBit(UARTSLK_TXEN_EXTI);
 
   NVIC_EnableIRQ(EXTI4_IRQn);
+
+  // Enable the Transfer Complete interrupt
+  //DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, ENABLE);
+  /* Clear DMA flags */
+  DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
+  /* Enable USART DMA RX Requests */
+  USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, ENABLE);
+  /* Clear transfer complete */
+  //USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
+  /* Enable DMA USART TX Stream */
+  DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
 
   //Enable UART
   USART_Cmd(UARTSLK_TYPE, ENABLE);
@@ -261,6 +285,48 @@ int uartslkPutchar(int ch)
     
     return (unsigned char)ch;
 }
+
+void uartslkGetAvailableData(uint32_t size, uint8_t* data, uint32_t* bytesReceived)
+{
+  // So -- we have a client buffer
+  // Need to do the following:
+  // 1) Determine how much unread data is currently sitting in the DMA FIFO
+  // 2) memcpy all of it (or the max that fits in the client buffer) into the client buffer
+
+  // 1) Determining how much unread data -- need two things
+  //    - tail and head index
+  //    - head is where we start, tail is (FIFO size - NDTR) - 1?
+
+  // NDTR starts at RX_FIFO_SIZE and decreases as the fifo fills up, and resets on wraparound
+  // So, the index into the FIFO that stores the most recent data is 
+  uint32_t RxFifoTail = RX_FIFO_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
+
+  // Two scenarios now. 
+  // if RxFifoTail > RxFifoHead : straight memcpy
+  // if RxFifoTail < RxFiFoHead: two memcpys
+
+  if (RxFifoTail > RxFifoHead)
+  {
+    memcpy(data, &RxFifo[RxFifoHead], (RxFifoTail - RxFifoHead) + 1);
+    *bytesReceived = RxFifoTail - RxFifoHead + 1;
+    RxFifoHead = (RxFifoTail + 1) % RX_FIFO_SIZE;
+  }
+  else if (RxFifoTail < RxFifoHead)
+  {
+    // two part memcpy -- first do the end of the FIFO
+    uint32_t bytesSoFar = 0;
+    memcpy(data, &RxFifo[RxFifoHead], RX_FIFO_SIZE - RxFifoHead);
+    bytesSoFar += RX_FIFO_SIZE - RxFifoHead;
+    RxFifoHead = 0;
+
+    // Finish the rest up to the tail
+    memcpy(data, &RxFifo[RxFifoHead], (RxFifoTail - RxFifoHead) + 1);
+    *bytesReceived = bytesSoFar + RxFifoTail - RxFifoHead + 1;
+    RxFifoHead = (RxFifoTail + 1) % RX_FIFO_SIZE;
+  }
+  // TODO handle empty fifo...
+}
+
 
 void uartslkGetDataDmaBlocking(uint32_t size, uint8_t* data, uint32_t *pActualSize)
 {
@@ -394,16 +460,37 @@ void uartslkIsr(void)
   //   if (USART_GekktITStatus(UARTSLK_TYPE, USART_IT_RXNE) == SET)
   // we do this check as fast as possible to minimize the chance of an overrun,
   // which occasionally cause problems and cause packet loss at high CPU usage
+  // if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_RXNE) == SET)
+  // {
+  //   // Copy the data out of the rolling FIFO into the other buffer?
+
+  //   // Find what the resulting 
+
+
+  //   do
+  //   {
+  //     RxFifo2[RxFifo2Counter++] = RxFifo[RxFifoCounter++];
+  //   } while ((RxFifoCounter < (FIFO_SIZE - ))
+  // } 
   if ((UARTSLK_TYPE->SR & (1<<5)) != 0) // if the RXNE interrupt has occurred
   {
     uint8_t rxDataInterrupt = (uint8_t)(UARTSLK_TYPE->DR & 0xFF);
     xQueueSendFromISR(uartslkDataDelivery, &rxDataInterrupt, &xHigherPriorityTaskWoken);
   }
-  else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_IDLE) == SET)
-  {
-    USART_ReceiveData(UARTSLK_TYPE);
-    DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
-  }
+  // else if (usart_getitstatus(uartslk_type, usart_it_idle) == set)
+  // {
+  //   // Clear the interrupt 
+  //   volatile uint34_t tmp;
+  //   tmp = UARTSLK_TYPE->SR;
+  //   tmp = UARTSLK_TYPE->DR;
+
+  //   // Disable the DMA and wait
+
+  //   DMA_Cmd() 
+
+  //   //usart_receivedata(uartslk_type);
+  //   //dma_cmd(uartslk_rx_dma_stream, disable);
+  // }
   else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_TXE) == SET)
   {
     if (outDataIsr && (dataIndexIsr < dataSizeIsr))
@@ -461,5 +548,5 @@ void __attribute__((used)) DMA2_Stream7_IRQHandler(void)
 
 void __attribute__((used)) DMA2_Stream1_IRQHandler(void)
 {
-  uartslkDmaRxIsr();
+  //uartslkDmaRxIsr();
 }
