@@ -72,9 +72,9 @@ static void syslinkTask(void *param)
     rxState = waitForFirstStart;
     counter = 0;
     done = 0;
-    while(counter < sizeof(rxBuffer) && done == 0)
+    while(counter < actualSize && done == 0)
     {
-      c = rxBuffer[counter];
+      c = rxBuffer[counter++];
       switch(rxState)
       {
         case waitForFirstStart:
@@ -147,7 +147,6 @@ static void syslinkTask(void *param)
           ASSERT(0);
           break;
       }
-      counter++;
     }
   }
 }

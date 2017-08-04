@@ -42,7 +42,7 @@
 #include "nvicconf.h"
 #include "config.h"
 #include "queuemonitor.h"
-
+#include "debug.h"
 
 #define UARTSLK_DATA_TIMEOUT_MS 1000
 #define UARTSLK_DATA_TIMEOUT_TICKS (UARTSLK_DATA_TIMEOUT_MS / portTICK_RATE_MS)
@@ -65,11 +65,72 @@ static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
+#define RX_BUFFER_SIZE 256
+static uint8_t RxBuffer[RX_BUFFER_SIZE];
+static volatile uint32_t rxBufferContentsSize = 0;
+static volatile uint32_t rxBufferContentsSizeAfterDisable = 0;
+
 // for debug
 volatile uint32_t dataRemainingAfterTransfer;
 
 static void uartslkPauseDma();
 static void uartslkResumeDma();
+
+static bool isValidSyslinkPacket()
+{
+  uint8_t size;
+  uint8_t chksum[2];
+
+  // Must be at least 6 for start, type, len, and chksum.
+  if(rxBufferContentsSize < 6)
+  {
+    return false;
+  }
+
+  // start byte 1
+  if(RxBuffer[0] != 0xBC)
+  {
+    return false;
+  }
+
+  // start byte 2
+  if(RxBuffer[1] != 0xCF)
+  {
+    return false;
+  }
+
+  chksum[0] = RxBuffer[2];
+  chksum[1] = RxBuffer[2];
+
+  size = RxBuffer[3];
+
+  chksum[0] += RxBuffer[3];
+  chksum[1] += chksum[0];
+
+  // does the rxBufferContentSize match what the size param says it should?
+  if((size + 6) < rxBufferContentsSize)
+  {
+    return false;
+  }
+
+  for(int8_t i = 0; i < size; i++)
+  {
+    chksum[0] += RxBuffer[4 + i];
+    chksum[1] += chksum[0];
+  }
+
+  if(chksum[0] != RxBuffer[4 + size])
+  {
+    return false;
+  }
+
+  if(chksum[1] != RxBuffer[4 + size + 1])
+  {
+    return false;
+  }
+
+  return true;
+}
 
 /**
   * Configures the UART DMA. Mainly used for FreeRTOS trace
@@ -106,6 +167,8 @@ void uartslkDmaInit(void)
   // Configure RX DMA
   DMA_InitStructure.DMA_Channel = UARTSLK_RX_DMA_CH;
   DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
+  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)RxBuffer;
+  DMA_InitStructure.DMA_BufferSize = RX_BUFFER_SIZE;
   DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
   DMA_Init(UARTSLK_RX_DMA_STREAM, &DMA_InitStructure);
   
@@ -119,6 +182,18 @@ void uartslkDmaInit(void)
   
   NVIC_InitStructure.NVIC_IRQChannel = UARTSLK_RX_DMA_IRQ;
   NVIC_Init(&NVIC_InitStructure);
+  
+  
+  // Enable Rx DMA
+  DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, ENABLE);
+  /* Clear DMA flags */
+  DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
+  /* Enable USART DMA RX Requests */
+  USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, ENABLE);
+  /* Clear transfer complete */
+  //USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
+  /* Enable DMA USART TX Stream */
+  DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
 
   isUartDmaInitialized = true;
 }
@@ -266,29 +341,18 @@ void uartslkGetDataDmaBlocking(uint32_t size, uint8_t* data, uint32_t *pActualSi
 {
   if (isUartDmaInitialized)
   {
-    xSemaphoreTake(uartRxBusy, portMAX_DELAY);
-    // Wait for DMA to be free
-    while(DMA_GetCmdStatus(UARTSLK_RX_DMA_STREAM) != DISABLE);
-
-    // Set the Rx buffer to the data
-    UARTSLK_RX_DMA_STREAM->M0AR = (uint32_t)&data[0];
-    UARTSLK_RX_DMA_STREAM->NDTR = size; 
-
     // Enable the Transfer Complete interrupt
-    DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, ENABLE);
-    /* Clear DMA flags */
-    DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
-    /* Enable USART DMA RX Requests */
-    USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, ENABLE);
-    /* Clear transfer complete */
-    //USART_ClearFlag(UARTSLK_TYPE, USART_FLAG_TC);
-    /* Enable DMA USART TX Stream */
-    DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
     xSemaphoreTake(waitUntilReceiveDone, portMAX_DELAY);
 
-    *pActualSize = (size - dataRemainingAfterTransfer);
+    uint32_t toCopy = rxBufferContentsSize;
+    if (toCopy > size) 
+    {
+      toCopy = size;
+    }
 
-    xSemaphoreGive(uartRxBusy);
+    memcpy(data, RxBuffer, toCopy);
+    *pActualSize = toCopy;
+
   }
 }
 
@@ -374,14 +438,31 @@ void uartslkDmaRxIsr(void)
 {
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
-  // Grab the remaining count in NDTR before clearing
-  dataRemainingAfterTransfer = UARTSLK_RX_DMA_STREAM->NDTR;
+  // Get the total number of bytes that were written
+  if( rxBufferContentsSize != RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR)
+  {
+    rxBufferContentsSize = RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
+  }
 
-  // Stop and cleanup DMA stream
-  DMA_ITConfig(UARTSLK_RX_DMA_STREAM, DMA_IT_TC, DISABLE);
-  DMA_ClearITPendingBit(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_FLAG_TCIF);
-  USART_DMACmd(UARTSLK_TYPE, USART_DMAReq_Rx, DISABLE);
-  DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
+  if(rxBufferContentsSize > 32)
+  {
+    DEBUG_PRINT("LARGE PACKET?");
+  }
+
+  if(!isValidSyslinkPacket())
+  {
+    DEBUG_PRINT("RECEIVED INVALID SYSLINK PACKET");
+  }
+
+  // this breaks uplevel but will make it easier to find errors.
+  memset(RxBuffer, 0, RX_BUFFER_SIZE);
+
+  // Restart the DMA
+  DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
+  UARTSLK_RX_DMA_STREAM->NDTR = RX_BUFFER_SIZE;
+  UARTSLK_RX_DMA_STREAM->M0AR = (uint32_t)RxBuffer;
+  /* Enable DMA USART TX Stream */
+  DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
 
   xSemaphoreGiveFromISR(waitUntilReceiveDone, &xHigherPriorityTaskWoken);
 }
@@ -401,8 +482,23 @@ void uartslkIsr(void)
   }
   else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_IDLE) == SET)
   {
-    USART_ReceiveData(UARTSLK_TYPE);
+    // Disable the DMA
     DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
+    
+    // Block on the EN bit -- TODO - should add a timeout here
+    while((UARTSLK_RX_DMA_STREAM->CR & CCR_ENABLE_SET) != 0);
+
+    //rxBufferContentsSize = RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
+  // Get the total number of bytes that were written
+  rxBufferContentsSize = RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
+
+  if(rxBufferContentsSize > 32)
+  {
+    DEBUG_PRINT("LARGE PACKET?");
+  }
+    
+    // This step is necessary to clear the IDLE interrupt
+    USART_ReceiveData(UARTSLK_TYPE);
   }
   else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_TXE) == SET)
   {

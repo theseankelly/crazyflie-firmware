@@ -148,21 +148,24 @@ static bool owSyslinkTransfer(uint8_t type, uint8_t length)
   slp.length = length;
   memcpy(slp.data, &owCmdBuf, length);
 
-  syslinkSendPacket(&slp);
-  // Wait for reply
-  if (xSemaphoreTake(waitForReply, M2T(5000)) == pdTRUE)
-  //if (xSemaphoreTake(waitForReply, portMAX_DELAY))
+  while (1)
   {
-    // We have now got a reply and *owCmd has been filled with data
-    if (owDataIsValid)
+    syslinkSendPacket(&slp);
+    // Wait for reply
+    if (xSemaphoreTake(waitForReply, M2T(500)) == pdTRUE)
+    //if (xSemaphoreTake(waitForReply, portMAX_DELAY))
     {
-      owDataIsValid = false;
-      return true;
+      // We have now got a reply and *owCmd has been filled with data
+      if (owDataIsValid)
+      {
+        owDataIsValid = false;
+        return true;
+      }
     }
-  }
-  else
-  {
-    DEBUG_PRINT("Cmd 0x%X timeout.\n", slp.type);
+    else
+    {
+      DEBUG_PRINT("Cmd 0x%X timeout.\n", slp.type);
+    }
   }
 
   return false;
