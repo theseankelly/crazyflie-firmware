@@ -66,7 +66,10 @@ static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
 #define RX_BUFFER_SIZE 256
-static uint8_t RxBuffer[RX_BUFFER_SIZE];
+static uint8_t RxBuffer0[RX_BUFFER_SIZE];
+static uint8_t RxBuffer1[RX_BUFFER_SIZE];
+static volatile bool RxBuffer0Full = false;
+static volatile bool RxBuffer1Full = false;
 static volatile uint32_t rxBufferContentsSize = 0;
 static volatile uint32_t rxBufferContentsSizeAfterDisable = 0;
 
@@ -76,61 +79,61 @@ volatile uint32_t dataRemainingAfterTransfer;
 static void uartslkPauseDma();
 static void uartslkResumeDma();
 
-static bool isValidSyslinkPacket()
-{
-  uint8_t size;
-  uint8_t chksum[2];
+// static bool isValidSyslinkPacket()
+// {
+//   uint8_t size;
+//   uint8_t chksum[2];
 
-  // Must be at least 6 for start, type, len, and chksum.
-  if(rxBufferContentsSize < 6)
-  {
-    return false;
-  }
+//   // Must be at least 6 for start, type, len, and chksum.
+//   if(rxBufferContentsSize < 6)
+//   {
+//     return false;
+//   }
 
-  // start byte 1
-  if(RxBuffer[0] != 0xBC)
-  {
-    return false;
-  }
+//   // start byte 1
+//   if(RxBuffer[0] != 0xBC)
+//   {
+//     return false;
+//   }
 
-  // start byte 2
-  if(RxBuffer[1] != 0xCF)
-  {
-    return false;
-  }
+//   // start byte 2
+//   if(RxBuffer[1] != 0xCF)
+//   {
+//     return false;
+//   }
 
-  chksum[0] = RxBuffer[2];
-  chksum[1] = RxBuffer[2];
+//   chksum[0] = RxBuffer[2];
+//   chksum[1] = RxBuffer[2];
 
-  size = RxBuffer[3];
+//   size = RxBuffer[3];
 
-  chksum[0] += RxBuffer[3];
-  chksum[1] += chksum[0];
+//   chksum[0] += RxBuffer[3];
+//   chksum[1] += chksum[0];
 
-  // does the rxBufferContentSize match what the size param says it should?
-  if((size + 6) < rxBufferContentsSize)
-  {
-    return false;
-  }
+//   // does the rxBufferContentSize match what the size param says it should?
+//   if((size + 6) < rxBufferContentsSize)
+//   {
+//     return false;
+//   }
 
-  for(int8_t i = 0; i < size; i++)
-  {
-    chksum[0] += RxBuffer[4 + i];
-    chksum[1] += chksum[0];
-  }
+//   for(int8_t i = 0; i < size; i++)
+//   {
+//     chksum[0] += RxBuffer[4 + i];
+//     chksum[1] += chksum[0];
+//   }
 
-  if(chksum[0] != RxBuffer[4 + size])
-  {
-    return false;
-  }
+//   if(chksum[0] != RxBuffer[4 + size])
+//   {
+//     return false;
+//   }
 
-  if(chksum[1] != RxBuffer[4 + size + 1])
-  {
-    return false;
-  }
+//   if(chksum[1] != RxBuffer[4 + size + 1])
+//   {
+//     return false;
+//   }
 
-  return true;
-}
+//   return true;
+// }
 
 /**
   * Configures the UART DMA. Mainly used for FreeRTOS trace
@@ -167,9 +170,12 @@ void uartslkDmaInit(void)
   // Configure RX DMA
   DMA_InitStructure.DMA_Channel = UARTSLK_RX_DMA_CH;
   DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralToMemory;
-  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)RxBuffer;
+  DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)RxBuffer0;
   DMA_InitStructure.DMA_BufferSize = RX_BUFFER_SIZE;
+  DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
   DMA_Cmd(UARTSLK_RX_DMA_STREAM, DISABLE);
+  DMA_DoubleBufferModeConfig(UARTSLK_RX_DMA_STREAM, (uint32_t)RxBuffer1, DMA_Memory_0);
+  DMA_DoubleBufferModeCmd(UARTSLK_RX_DMA_STREAM, ENABLE);
   DMA_Init(UARTSLK_RX_DMA_STREAM, &DMA_InitStructure);
   
   // Configure interrupts 
@@ -259,7 +265,7 @@ void uartslkInit(void)
   NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
 
-  USART_ITConfig(UARTSLK_TYPE, USART_IT_IDLE, ENABLE);
+  //USART_ITConfig(UARTSLK_TYPE, USART_IT_IDLE, ENABLE);
 
   //Setting up TXEN pin (NRF flow control)
   RCC_AHB1PeriphClockCmd(UARTSLK_TXEN_PERIF, ENABLE);
@@ -344,14 +350,28 @@ void uartslkGetDataDmaBlocking(uint32_t size, uint8_t* data, uint32_t *pActualSi
     // Enable the Transfer Complete interrupt
     xSemaphoreTake(waitUntilReceiveDone, portMAX_DELAY);
 
-    uint32_t toCopy = rxBufferContentsSize;
-    if (toCopy > size) 
+    // Copy the contents of the inactive buffer into the client buffer
+    if (0 == DMA_GetCurrentMemoryTarget(UARTSLK_RX_DMA_STREAM))
     {
-      toCopy = size;
+      memcpy(data, RxBuffer0, RX_BUFFER_SIZE);
+      RxBuffer0Full = false;
+    }
+    else
+    {
+      memcpy(data, RxBuffer1, RX_BUFFER_SIZE);
+      RxBuffer1Full = false;
     }
 
-    memcpy(data, RxBuffer, toCopy);
-    *pActualSize = toCopy;
+    *pActualSize = RX_BUFFER_SIZE;
+
+    // uint32_t toCopy = rxBufferContentsSize;
+    // if (toCopy > size) 
+    // {
+    //   toCopy = size;
+    // }
+
+    // memcpy(data, RxBuffer, toCopy);
+    // *pActualSize = toCopy;
 
   }
 }
@@ -438,6 +458,7 @@ void uartslkDmaRxIsr(void)
 {
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
 
+#if 0
   // Get the total number of bytes that were written
   if( rxBufferContentsSize != RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR)
   {
@@ -463,8 +484,31 @@ void uartslkDmaRxIsr(void)
   UARTSLK_RX_DMA_STREAM->M0AR = (uint32_t)RxBuffer;
   /* Enable DMA USART TX Stream */
   DMA_Cmd(UARTSLK_RX_DMA_STREAM, ENABLE);
+#endif
+  
+  if (0 == DMA_GetCurrentMemoryTarget(UARTSLK_RX_DMA_STREAM))
+  {
+      if(RxBuffer1Full)
+      {
+        DEBUG_PRINT("Buffer 1 overrun!");
+      } 
 
+      RxBuffer1Full = true;
+  }
+  else
+  {
+      if(RxBuffer0Full)
+      {
+        DEBUG_PRINT("Buffer 0 overrun!");
+      } 
+
+      RxBuffer0Full = true;
+  }
+  
   xSemaphoreGiveFromISR(waitUntilReceiveDone, &xHigherPriorityTaskWoken);
+  DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, DMA_FLAG_TCIF1);
+
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void uartslkIsr(void)

@@ -63,16 +63,14 @@ static void syslinkTask(void *param)
   uint8_t done = 0;
   uint32_t actualSize;
 
-  uint8_t rxBuffer[(sizeof(SyslinkPacket) + 4)];
+  uint8_t rxBuffer[256];
   while(1)
   {
     memset(rxBuffer, 0, sizeof(rxBuffer));
     uartslkGetDataDmaBlocking(sizeof(rxBuffer), rxBuffer, &actualSize);
 
-    rxState = waitForFirstStart;
     counter = 0;
-    done = 0;
-    while(counter < actualSize && done == 0)
+    while(counter < actualSize)
     {
       c = rxBuffer[counter++];
       switch(rxState)
@@ -134,7 +132,7 @@ static void syslinkTask(void *param)
           if (cksum[1] == c)
           {
             syslinkRouteIncommingPacket(&slp);
-            done = 1;
+            rxState = waitForFirstStart;
           }
           else
           {
