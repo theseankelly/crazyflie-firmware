@@ -449,13 +449,6 @@ void uartslkDmaRxIsr(void)
     DEBUG_PRINT("LARGE PACKET?");
   }
 
-  if(!isValidSyslinkPacket())
-  {
-    DEBUG_PRINT("RECEIVED INVALID SYSLINK PACKET");
-  }
-
-  // this breaks uplevel but will make it easier to find errors.
-  memset(RxBuffer, 0, RX_BUFFER_SIZE);
 
   // Restart the DMA
   DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
