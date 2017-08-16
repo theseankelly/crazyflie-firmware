@@ -65,10 +65,13 @@ static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
-#define RX_BUFFER_SIZE 256
+#define RX_BUFFER_SIZE 64
 static uint8_t RxBuffer[RX_BUFFER_SIZE];
 static volatile uint32_t rxBufferContentsSize = 0;
 static volatile uint32_t rxBufferContentsSizeAfterDisable = 0;
+
+static volatile uint32_t saturatedBufferCount = 0;
+static volatile uint32_t largePayloadCount = 0;
 
 // for debug
 volatile uint32_t dataRemainingAfterTransfer;
@@ -444,11 +447,14 @@ void uartslkDmaRxIsr(void)
     rxBufferContentsSize = RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
   }
 
-  if(rxBufferContentsSize > 32)
+  if(rxBufferContentsSize== RX_BUFFER_SIZE)
   {
-    DEBUG_PRINT("LARGE PACKET?");
+    saturatedBufferCount++;
   }
-
+  else if(rxBufferContentsSize > 20)
+  {
+    largePayloadCount++;
+  }
 
   // Restart the DMA
   DMA_ClearFlag(UARTSLK_RX_DMA_STREAM, UARTSLK_RX_DMA_ALL_FLAGS);
