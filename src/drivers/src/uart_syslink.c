@@ -65,10 +65,18 @@ static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
-#define RX_BUFFER_SIZE 256
+#define RX_BUFFER_SIZE 64 
 static uint8_t RxBuffer[RX_BUFFER_SIZE];
 static volatile uint32_t rxBufferContentsSize = 0;
 static volatile uint32_t rxBufferContentsSizeAfterDisable = 0;
+
+static volatile uint32_t shortPacketsCount = 0;
+static volatile uint32_t invalidStartByte1PacketsCount = 0;
+static volatile uint32_t invalidStartByte2PacketsCount = 0;
+static volatile uint32_t truncatedPacketsCount = 0;
+static volatile uint32_t invalidChecksum1PacketsCount = 0;
+static volatile uint32_t invalidChecksum2PacketsCount = 0;
+static volatile uint32_t longPacketsCount = 0;
 
 // for debug
 volatile uint32_t dataRemainingAfterTransfer;
@@ -84,18 +92,21 @@ static bool isValidSyslinkPacket()
   // Must be at least 6 for start, type, len, and chksum.
   if(rxBufferContentsSize < 6)
   {
+    shortPacketsCount++;
     return false;
   }
 
   // start byte 1
   if(RxBuffer[0] != 0xBC)
   {
+    invalidStartByte1PacketsCount++;
     return false;
   }
 
   // start byte 2
   if(RxBuffer[1] != 0xCF)
   {
+    invalidStartByte2PacketsCount++;
     return false;
   }
 
@@ -108,9 +119,17 @@ static bool isValidSyslinkPacket()
   chksum[1] += chksum[0];
 
   // does the rxBufferContentSize match what the size param says it should?
-  if((size + 6) < rxBufferContentsSize)
+  if((size + 6) > rxBufferContentsSize)
   {
+    truncatedPacketsCount++;
     return false;
+  }
+
+  // is the buffer contents larger than the packet
+  if(rxBufferContentsSize > size + 6)
+  {
+    longPacketsCount++;
+    // don't need to throw an error really
   }
 
   for(int8_t i = 0; i < size; i++)
@@ -121,11 +140,13 @@ static bool isValidSyslinkPacket()
 
   if(chksum[0] != RxBuffer[4 + size])
   {
+    invalidChecksum1PacketsCount++;
     return false;
   }
 
   if(chksum[1] != RxBuffer[4 + size + 1])
   {
+    invalidChecksum2PacketsCount++;
     return false;
   }
 
@@ -442,11 +463,6 @@ void uartslkDmaRxIsr(void)
   if( rxBufferContentsSize != RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR)
   {
     rxBufferContentsSize = RX_BUFFER_SIZE - UARTSLK_RX_DMA_STREAM->NDTR;
-  }
-
-  if(rxBufferContentsSize > 32)
-  {
-    DEBUG_PRINT("LARGE PACKET?");
   }
 
   if(!isValidSyslinkPacket())
