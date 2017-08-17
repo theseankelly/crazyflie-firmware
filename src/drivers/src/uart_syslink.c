@@ -65,13 +65,16 @@ static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
 
-#define RX_BUFFER_SIZE 256
+#define RX_BUFFER_SIZE 32 
 static uint8_t RxBuffer0[RX_BUFFER_SIZE];
 static uint8_t RxBuffer1[RX_BUFFER_SIZE];
 static volatile bool RxBuffer0Full = false;
 static volatile bool RxBuffer1Full = false;
 static volatile uint32_t rxBufferContentsSize = 0;
 static volatile uint32_t rxBufferContentsSizeAfterDisable = 0;
+
+static volatile uint32_t bufferOverflowCount = 0;
+
 
 // for debug
 volatile uint32_t dataRemainingAfterTransfer;
@@ -490,7 +493,7 @@ void uartslkDmaRxIsr(void)
   {
       if(RxBuffer1Full)
       {
-        DEBUG_PRINT("Buffer 1 overrun!");
+        bufferOverflowCount++;
       } 
 
       RxBuffer1Full = true;
@@ -499,7 +502,7 @@ void uartslkDmaRxIsr(void)
   {
       if(RxBuffer0Full)
       {
-        DEBUG_PRINT("Buffer 0 overrun!");
+        bufferOverflowCount++;
       } 
 
       RxBuffer0Full = true;

@@ -42,6 +42,7 @@
 #include "configblock.h"
 #include "pm.h"
 #include "ow.h"
+#include "usec_time.h"
 
 static bool isInit = false;
 static uint8_t sendBuffer[64];
@@ -49,6 +50,9 @@ static uint8_t sendBuffer[64];
 static void syslinkRouteIncommingPacket(SyslinkPacket *slp);
 
 static xSemaphoreHandle syslinkAccess;
+
+static volatile uint64_t DmaRxTimeUs = 0;
+static volatile uint64_t SyslinkProcessTimeUs = 0;
 
 /* Syslink task, handles communication between nrf and stm and dispatch messages
  */
@@ -60,14 +64,29 @@ static void syslinkTask(void *param)
   uint8_t dataIndex = 0;
   uint8_t cksum[2] = {0};
   uint8_t counter = 0;
-  uint8_t done = 0;
   uint32_t actualSize;
 
+  uint64_t beforeDmaTimeUs = 0;
+  uint64_t afterDmaTimeUs = 0;
+
+  uint64_t startOfLoopTimeUs = 0;
+  uint64_t startOfLoopPreviousTimeUs = 0;
+
   uint8_t rxBuffer[256];
+
+  startOfLoopPreviousTimeUs = usecTimestamp();
   while(1)
   {
+
     memset(rxBuffer, 0, sizeof(rxBuffer));
+
+    beforeDmaTimeUs = usecTimestamp();
+
+
     uartslkGetDataDmaBlocking(sizeof(rxBuffer), rxBuffer, &actualSize);
+    afterDmaTimeUs = usecTimestamp();
+
+    DmaRxTimeUs = afterDmaTimeUs - beforeDmaTimeUs;
 
     counter = 0;
     while(counter < actualSize)
