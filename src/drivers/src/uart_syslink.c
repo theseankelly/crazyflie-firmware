@@ -43,6 +43,8 @@
 #include "config.h"
 #include "queuemonitor.h"
 
+// Set to 1 to enable some perf counters for debugging dropped packets, etc
+#define UART_SYSLINK_DEBUG 0
 
 #define UARTSLK_DATA_TIMEOUT_MS 1000
 #define UARTSLK_DATA_TIMEOUT_TICKS (UARTSLK_DATA_TIMEOUT_MS / portTICK_RATE_MS)
@@ -52,7 +54,7 @@ static bool isInit = false;
 
 static xSemaphoreHandle waitUntilSendDone;
 static xSemaphoreHandle uartBusy;
-static xQueueHandle uartslkDataDelivery;
+static xQueueHandle syslinkPacketDelivery;
 
 static uint8_t dmaBuffer[64];
 static uint8_t *outDataIsr;
@@ -63,6 +65,12 @@ static DMA_InitTypeDef DMA_InitStructureShare;
 static uint32_t initialDMACount;
 static uint32_t remainingDMACount;
 static bool     dmaIsPaused;
+
+static volatile SyslinkPacket slp = {0};
+static volatile SyslinkRxState rxState = waitForFirstStart;
+static volatile uint8_t dataIndex = 0;
+static volatile uint8_t cksum[2] = {0};
+static void uartslkHandleDataFromISR(uint8_t c, BaseType_t * const pxHigherPriorityTaskWoken);
 
 static void uartslkPauseDma();
 static void uartslkResumeDma();
@@ -110,8 +118,8 @@ void uartslkInit(void)
   uartBusy = xSemaphoreCreateBinary(); // initialized as blocking
   xSemaphoreGive(uartBusy); // but we give it because the uart isn't busy at initialization
 
-  uartslkDataDelivery = xQueueCreate(1024, sizeof(uint8_t));
-  DEBUG_QUEUE_MONITOR_REGISTER(uartslkDataDelivery);
+  syslinkPacketDelivery = xQueueCreate(8, sizeof(SyslinkPacket));
+  DEBUG_QUEUE_MONITOR_REGISTER(syslinkPacketDelivery);
 
   USART_InitTypeDef USART_InitStructure;
   GPIO_InitTypeDef GPIO_InitStructure;
@@ -191,15 +199,9 @@ bool uartslkTest(void)
   return isInit;
 }
 
-bool uartslkGetDataWithTimout(uint8_t *c)
+void uartslkGetPacketBlocking(SyslinkPacket* packet)
 {
-  if (xQueueReceive(uartslkDataDelivery, c, UARTSLK_DATA_TIMEOUT_TICKS) == pdTRUE)
-  {
-    return true;
-  }
-
-  *c = 0;
-  return false;
+  xQueueReceive(syslinkPacketDelivery, packet, portMAX_DELAY);
 }
 
 void uartslkSendData(uint32_t size, uint8_t* data)
@@ -315,6 +317,127 @@ void uartslkDmaIsr(void)
   xSemaphoreGiveFromISR(waitUntilSendDone, &xHigherPriorityTaskWoken);
 }
 
+#if UART_SYSLINK_DEBUG 
+static volatile uint32_t countMissedFirstStarts = 0;
+static volatile uint32_t countMissedSecondStarts = 0;
+static volatile uint32_t countChksumErrors = 0;
+static volatile uint32_t countTimeouts = 0;
+static volatile uint32_t queueOverflows = 0;
+static volatile bool seenValidPacket = false;
+#endif
+
+void uartslkHandleDataFromISR(uint8_t c, BaseType_t * const pxHigherPriorityTaskWoken)
+{
+  switch (rxState)
+  {
+  case waitForFirstStart:
+#if UART_SYSLINK_DEBUG 
+    if (c != SYSLINK_START_BYTE1)
+    {
+      countMissedFirstStarts++;
+    }
+#endif
+    rxState = (c == SYSLINK_START_BYTE1) ? waitForSecondStart : waitForFirstStart;
+    break;
+  case waitForSecondStart:
+#if UART_SYSLINK_DEBUG 
+    if (c != SYSLINK_START_BYTE2)
+    {
+      countMissedSecondStarts++;
+    }
+#endif
+    rxState = (c == SYSLINK_START_BYTE2) ? waitForType : waitForFirstStart;
+    break;
+  case waitForType:
+    cksum[0] = c;
+    cksum[1] = c;
+    slp.type = c;
+    rxState = waitForLength;
+    break;
+  case waitForLength:
+    if (c <= SYSLINK_MTU)
+    {
+      slp.length = c;
+      cksum[0] += c;
+      cksum[1] += cksum[0];
+      dataIndex = 0;
+      rxState = (c > 0) ? waitForData : waitForChksum1;
+    }
+    else
+    {
+      rxState = waitForFirstStart;
+    }
+    break;
+  case waitForData:
+    slp.data[dataIndex] = c;
+    cksum[0] += c;
+    cksum[1] += cksum[0];
+    dataIndex++;
+    if (dataIndex == slp.length)
+    {
+      rxState = waitForChksum1;
+    }
+    break;
+  case waitForChksum1:
+    if (cksum[0] == c)
+    {
+      rxState = waitForChksum2;
+    }
+    else
+    {
+#if UART_SYSLINK_DEBUG 
+      countChksumErrors++;
+#endif
+      rxState = waitForFirstStart; //Checksum error
+      IF_DEBUG_ASSERT(1);
+    }
+    break;
+  case waitForChksum2:
+    if (cksum[1] == c)
+    {
+#if UART_SYSLINK_DEBUG 
+      // Expect some missed bytes at startup before the Rx loop
+      // gets synchronized against the Tx byte stream - reset the
+      // diag counters on the first (and only the first) valid packet received
+      if (!seenValidPacket)
+      {
+        seenValidPacket = true;
+        countMissedFirstStarts = 0;
+        countMissedSecondStarts = 0;
+        countChksumErrors = 0;
+        countTimeouts = 0;
+        queueOverflows = 0;
+      }
+#endif
+      // Mark the buffer not pended so we don't try to overwrite
+      if (!xQueueIsQueueFullFromISR(syslinkPacketDelivery))
+      {
+        xQueueSendFromISR(syslinkPacketDelivery, (void *)&slp, pxHigherPriorityTaskWoken);
+      }
+      else
+      {
+#if UART_SYSLINK_DEBUG 
+        queueOverflows++;
+#endif
+        IF_DEBUG_ASSERT(0);
+      }
+    }
+    else
+    {
+#if UART_SYSLINK_DEBUG 
+      countChksumErrors++;
+#endif
+      rxState = waitForFirstStart; //Checksum error
+      IF_DEBUG_ASSERT(0);
+    }
+    rxState = waitForFirstStart;
+    break;
+  default:
+    ASSERT(0);
+    break;
+  }
+}
+
 void uartslkIsr(void)
 {
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
@@ -323,10 +446,10 @@ void uartslkIsr(void)
   //   if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_RXNE) == SET)
   // we do this check as fast as possible to minimize the chance of an overrun,
   // which occasionally cause problems and cause packet loss at high CPU usage
-  if ((UARTSLK_TYPE->SR & (1<<5)) != 0) // if the RXNE interrupt has occurred
+  if ((UARTSLK_TYPE->SR & (1 << 5)) != 0) // if the RXNE interrupt has occurred
   {
-    uint8_t rxDataInterrupt = (uint8_t)(UARTSLK_TYPE->DR & 0xFF);
-    xQueueSendFromISR(uartslkDataDelivery, &rxDataInterrupt, &xHigherPriorityTaskWoken);
+    uint8_t c = (uint8_t)(UARTSLK_TYPE->DR & 0xFF);
+    uartslkHandleDataFromISR(c, &xHigherPriorityTaskWoken);
   }
   else if (USART_GetITStatus(UARTSLK_TYPE, USART_IT_TXE) == SET)
   {
@@ -351,6 +474,8 @@ void uartslkIsr(void)
     asm volatile ("" : "=m" (UARTSLK_TYPE->SR) : "r" (UARTSLK_TYPE->SR)); // force non-optimizable reads
     asm volatile ("" : "=m" (UARTSLK_TYPE->DR) : "r" (UARTSLK_TYPE->DR)); // of these two registers
   }
+
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void uartslkTxenFlowctrlIsr()
