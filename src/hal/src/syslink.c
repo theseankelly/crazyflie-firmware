@@ -50,6 +50,13 @@ static void syslinkRouteIncommingPacket(SyslinkPacket *slp);
 
 static xSemaphoreHandle syslinkAccess;
 
+static volatile uint32_t countMissedFirstStarts = 0;
+static volatile uint32_t countMissedSecondStarts = 0;
+static volatile uint32_t countChksumErrors = 0;
+static volatile uint32_t countTimeouts = 0;
+
+static volatile bool seenValidPacket = false;
+
 /* Syslink task, handles communication between nrf and stm and dispatch messages
  */
 static void syslinkTask(void *param)
@@ -69,9 +76,17 @@ static void syslinkTask(void *param)
       switch(rxState)
       {
         case waitForFirstStart:
+          if (c != SYSLINK_START_BYTE1)
+          {
+            countMissedFirstStarts++;
+          }
           rxState = (c == SYSLINK_START_BYTE1) ? waitForSecondStart : waitForFirstStart;
           break;
         case waitForSecondStart:
+          if (c != SYSLINK_START_BYTE2)
+          {
+            countMissedSecondStarts++;
+          }
           rxState = (c == SYSLINK_START_BYTE2) ? waitForType : waitForFirstStart;
           break;
         case waitForType:
@@ -111,6 +126,7 @@ static void syslinkTask(void *param)
           }
           else
           {
+            countChksumErrors++;
             rxState = waitForFirstStart; //Checksum error
             IF_DEBUG_ASSERT(1);
           }
@@ -118,10 +134,22 @@ static void syslinkTask(void *param)
         case waitForChksum2:
           if (cksum[1] == c)
           {
+            // Expect some missed bytes at startup before the Rx loop
+            // gets synchronized against the Tx byte stream - reset the 
+            // diag counters on the first (and only the first) valid packet received
+            if(!seenValidPacket)
+            {
+              seenValidPacket = true;
+              countMissedFirstStarts = 0;
+              countMissedSecondStarts = 0;
+              countChksumErrors = 0;
+              countTimeouts = 0;
+            }
             syslinkRouteIncommingPacket(&slp);
           }
           else
           {
+            countChksumErrors++;
             rxState = waitForFirstStart; //Checksum error
             IF_DEBUG_ASSERT(1);
           }
@@ -135,6 +163,7 @@ static void syslinkTask(void *param)
     else
     {
       // Timeout
+      countTimeouts++;
       rxState = waitForFirstStart;
     }
   }
