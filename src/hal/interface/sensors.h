@@ -41,9 +41,9 @@ bool sensorsManufacturingTest(void);
 void sensorsAcquire(sensorData_t *sensors, const uint32_t tick);
 
 // Allows individual sensor measurement
-bool sensorsReadGyro(Axis3f *gyro);
-bool sensorsReadAcc(Axis3f *acc);
-bool sensorsReadMag(Axis3f *mag);
+bool sensorsReadGyro(imu_t *gyro);
+bool sensorsReadAcc(imu_t *acc);
+bool sensorsReadMag(imu_t *mag);
 bool sensorsReadBaro(baro_t *baro);
 
 #endif //__SENSORS_H__

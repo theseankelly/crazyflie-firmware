@@ -49,6 +49,7 @@
 #include "ledseq.h"
 #include "sound.h"
 #include "filter.h"
+#include "usec_time.h"
 
 /**
  * Enable 250Hz digital LPF mode. However does not work with
@@ -108,6 +109,7 @@ static xSemaphoreHandle sensorsDataReady;
 
 static bool isInit = false;
 static sensorData_t sensors;
+static volatile uint64_t dataReadyTimeUsec = 0;
 
 static BiasObj gyroBiasRunning;
 static Axis3f  gyroBias;
@@ -141,9 +143,9 @@ float sinRoll;
 // This buffer needs to hold data from all sensors
 static uint8_t buffer[SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN + SENSORS_BARO_BUFF_LEN] = {0};
 
-static void processAccGyroMeasurements(const uint8_t *buffer);
-static void processMagnetometerMeasurements(const uint8_t *buffer);
-static void processBarometerMeasurements(const uint8_t *buffer);
+static void processAccGyroMeasurements(const uint8_t *buffer, uint64_t timestamp);
+static void processMagnetometerMeasurements(const uint8_t *buffer, uint64_t timestamp);
+static void processBarometerMeasurements(const uint8_t *buffer, uint64_t timestamp);
 static void sensorsSetupSlaveRead(void);
 
 #ifdef GYRO_GYRO_BIAS_LIGHT_WEIGHT
@@ -159,17 +161,17 @@ static void sensorsAddBiasValue(BiasObj* bias, int16_t x, int16_t y, int16_t z);
 static bool sensorsFindBiasValue(BiasObj* bias);
 static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out);
 
-bool sensorsReadGyro(Axis3f *gyro)
+bool sensorsReadGyro(imu_t *gyro)
 {
   return (pdTRUE == xQueueReceive(gyroDataQueue, gyro, 0));
 }
 
-bool sensorsReadAcc(Axis3f *acc)
+bool sensorsReadAcc(imu_t *acc)
 {
   return (pdTRUE == xQueueReceive(accelerometerDataQueue, acc, 0));
 }
 
-bool sensorsReadMag(Axis3f *mag)
+bool sensorsReadMag(imu_t *mag)
 {
   return (pdTRUE == xQueueReceive(magnetometerDataQueue, mag, 0));
 }
@@ -207,17 +209,21 @@ static void sensorsTask(void *param)
               (isMagnetometerPresent ? SENSORS_MAG_BUFF_LEN : 0) +
               (isBarometerPresent ? SENSORS_BARO_BUFF_LEN : 0));
 
+      // Cache a copy of the dataReady timestamp to avoid races if the interrupt
+      // fires while processing data
+      uint64_t dataTimestamp = dataReadyTimeUsec;
+
       i2cdevRead(I2C3_DEV, MPU6500_ADDRESS_AD0_HIGH, MPU6500_RA_ACCEL_XOUT_H, dataLen, buffer);
       // these functions process the respective data and queue it on the output queues
-      processAccGyroMeasurements(&(buffer[0]));
+      processAccGyroMeasurements(&(buffer[0]), dataTimestamp);
       if (isMagnetometerPresent)
       {
-          processMagnetometerMeasurements(&(buffer[SENSORS_MPU6500_BUFF_LEN]));
+          processMagnetometerMeasurements(&(buffer[SENSORS_MPU6500_BUFF_LEN]), dataTimestamp);
       }
       if (isBarometerPresent)
       {
           processBarometerMeasurements(&(buffer[isMagnetometerPresent ?
-                  SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN : SENSORS_MPU6500_BUFF_LEN]));
+                  SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN : SENSORS_MPU6500_BUFF_LEN]), dataTimestamp);
       }
 
       vTaskSuspendAll(); // ensure all queues are populated at the same time
@@ -236,7 +242,7 @@ static void sensorsTask(void *param)
   }
 }
 
-void processBarometerMeasurements(const uint8_t *buffer)
+void processBarometerMeasurements(const uint8_t *buffer, uint64_t timestamp)
 {
   static uint32_t rawPressure = 0;
   static int16_t rawTemp = 0;
@@ -250,25 +256,27 @@ void processBarometerMeasurements(const uint8_t *buffer)
     rawTemp = ((int16_t) buffer[5] << 8) | buffer[4];
   }
 
+  sensors.baro.timestamp = timestamp;
   sensors.baro.pressure = (float) rawPressure / LPS25H_LSB_PER_MBAR;
   sensors.baro.temperature = LPS25H_TEMP_OFFSET + ((float) rawTemp / LPS25H_LSB_PER_CELSIUS);
   sensors.baro.asl = lps25hPressureToAltitude(&sensors.baro.pressure);
 }
 
-void processMagnetometerMeasurements(const uint8_t *buffer)
+void processMagnetometerMeasurements(const uint8_t *buffer, uint64_t timestamp)
 {
   if (buffer[0] & (1 << AK8963_ST1_DRDY_BIT)) {
     int16_t headingx = (((int16_t) buffer[2]) << 8) | buffer[1];
     int16_t headingy = (((int16_t) buffer[4]) << 8) | buffer[3];
     int16_t headingz = (((int16_t) buffer[6]) << 8) | buffer[5];
 
-    sensors.mag.x = (float)headingx / MAG_GAUSS_PER_LSB;
-    sensors.mag.y = (float)headingy / MAG_GAUSS_PER_LSB;
-    sensors.mag.z = (float)headingz / MAG_GAUSS_PER_LSB;
+    sensors.mag.timestamp = timestamp;
+    sensors.mag.data.x = (float)headingx / MAG_GAUSS_PER_LSB;
+    sensors.mag.data.y = (float)headingy / MAG_GAUSS_PER_LSB;
+    sensors.mag.data.z = (float)headingz / MAG_GAUSS_PER_LSB;
   }
 }
 
-void processAccGyroMeasurements(const uint8_t *buffer)
+void processAccGyroMeasurements(const uint8_t *buffer, uint64_t timestamp)
 {
   Axis3f accScaled;
   // Note the ordering to correct the rotated 90º IMU coordinate system
@@ -290,16 +298,18 @@ void processAccGyroMeasurements(const uint8_t *buffer)
      processAccScale(ax, ay, az);
   }
 
-  sensors.gyro.x = -(gx - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
-  sensors.gyro.y =  (gy - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
-  sensors.gyro.z =  (gz - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
-  applyAxis3fLpf((lpf2pData*)(&gyroLpf), &sensors.gyro);
+  sensors.gyro.timestamp = timestamp;
+  sensors.gyro.data.x = -(gx - gyroBias.x) * SENSORS_DEG_PER_LSB_CFG;
+  sensors.gyro.data.y =  (gy - gyroBias.y) * SENSORS_DEG_PER_LSB_CFG;
+  sensors.gyro.data.z =  (gz - gyroBias.z) * SENSORS_DEG_PER_LSB_CFG;
+  applyAxis3fLpf((lpf2pData*)(&gyroLpf), &sensors.gyro.data);
 
+  sensors.acc.timestamp = timestamp;
   accScaled.x = -(ax) * SENSORS_G_PER_LSB_CFG / accScale;
   accScaled.y =  (ay) * SENSORS_G_PER_LSB_CFG / accScale;
   accScaled.z =  (az) * SENSORS_G_PER_LSB_CFG / accScale;
-  sensorsAccAlignToGravity(&accScaled, &sensors.acc);
-  applyAxis3fLpf((lpf2pData*)(&accLpf), &sensors.acc);
+  sensorsAccAlignToGravity(&accScaled, &sensors.acc.data);
+  applyAxis3fLpf((lpf2pData*)(&accLpf), &sensors.acc.data);
 }
 
 static void sensorsDeviceInit(void)
@@ -462,9 +472,9 @@ static void sensorsSetupSlaveRead(void)
 
 static void sensorsTaskInit(void)
 {
-  accelerometerDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  gyroDataQueue = xQueueCreate(1, sizeof(Axis3f));
-  magnetometerDataQueue = xQueueCreate(1, sizeof(Axis3f));
+  accelerometerDataQueue = xQueueCreate(1, sizeof(imu_t));
+  gyroDataQueue = xQueueCreate(1, sizeof(imu_t));
+  magnetometerDataQueue = xQueueCreate(1, sizeof(imu_t));
   barometerDataQueue = xQueueCreate(1, sizeof(baro_t));
 
   xTaskCreate(sensorsTask, SENSORS_TASK_NAME, SENSORS_TASK_STACKSIZE, NULL, SENSORS_TASK_PRI, NULL);
@@ -825,6 +835,9 @@ bool sensorsManufacturingTest(void)
 
 void __attribute__((used)) EXTI13_Callback(void)
 {
+  // TODO: investigate possibility of compensating for DLPF latency here
+  dataReadyTimeUsec = usecTimestamp();
+
   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
   xSemaphoreGiveFromISR(sensorsDataReady, &xHigherPriorityTaskWoken);
 

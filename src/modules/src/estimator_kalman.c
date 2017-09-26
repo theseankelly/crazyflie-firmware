@@ -365,16 +365,16 @@ void estimatorKalman(state_t *state, sensorData_t *sensors, control_t *control, 
   // slower than the IMU loop, but the IMU information is required externally at
   // a higher rate (for body rate control).
   if (sensorsReadAcc(&sensors->acc)) {
-    accAccumulator.x += GRAVITY_MAGNITUDE*sensors->acc.x; // accelerometer is in Gs
-    accAccumulator.y += GRAVITY_MAGNITUDE*sensors->acc.y; // but the estimator requires ms^-2
-    accAccumulator.z += GRAVITY_MAGNITUDE*sensors->acc.z;
+    accAccumulator.x += GRAVITY_MAGNITUDE*sensors->acc.data.x; // accelerometer is in Gs
+    accAccumulator.y += GRAVITY_MAGNITUDE*sensors->acc.data.y; // but the estimator requires ms^-2
+    accAccumulator.z += GRAVITY_MAGNITUDE*sensors->acc.data.z;
     accAccumulatorCount++;
   }
 
   if (sensorsReadGyro(&sensors->gyro)) {
-    gyroAccumulator.x += sensors->gyro.x * DEG_TO_RAD; // gyro is in deg/sec
-    gyroAccumulator.y += sensors->gyro.y * DEG_TO_RAD; // but the estimator requires rad/sec
-    gyroAccumulator.z += sensors->gyro.z * DEG_TO_RAD;
+    gyroAccumulator.x += sensors->gyro.data.x * DEG_TO_RAD; // gyro is in deg/sec
+    gyroAccumulator.y += sensors->gyro.data.y * DEG_TO_RAD; // but the estimator requires rad/sec
+    gyroAccumulator.z += sensors->gyro.data.z * DEG_TO_RAD;
     gyroAccumulatorCount++;
   }
 
@@ -1010,8 +1010,8 @@ static void stateEstimatorUpdateWithFlow(flowMeasurement_t *flow, sensorData_t *
   float thetapix = DEG_TO_RAD * 4.2f;
   //~~~ Body rates ~~~
   // TODO check if this is feasible or if some filtering has to be done
-  omegax_b = sensors->gyro.x * DEG_TO_RAD;
-  omegay_b = sensors->gyro.y * DEG_TO_RAD;
+  omegax_b = sensors->gyro.data.x * DEG_TO_RAD;
+  omegay_b = sensors->gyro.data.y * DEG_TO_RAD;
 
   // ~~~ Moves the body velocity into the global coordinate system ~~~
   // [bar{x},bar{y},bar{z}]_G = R*[bar{x},bar{y},bar{z}]_B
@@ -1240,9 +1240,9 @@ static void stateEstimatorExternalizeState(state_t *state, sensorData_t *sensors
   // Finally, note that these accelerations are in Gs, and not in m/s^2, hence - 1 for removing gravity
   state->acc = (acc_t){
       .timestamp = tick,
-      .x = R[0][0]*sensors->acc.x + R[0][1]*sensors->acc.y + R[0][2]*sensors->acc.z,
-      .y = R[1][0]*sensors->acc.x + R[1][1]*sensors->acc.y + R[1][2]*sensors->acc.z,
-      .z = R[2][0]*sensors->acc.x + R[2][1]*sensors->acc.y + R[2][2]*sensors->acc.z - 1
+      .x = R[0][0]*sensors->acc.data.x + R[0][1]*sensors->acc.data.y + R[0][2]*sensors->acc.data.z,
+      .y = R[1][0]*sensors->acc.data.x + R[1][1]*sensors->acc.data.y + R[1][2]*sensors->acc.data.z,
+      .z = R[2][0]*sensors->acc.data.x + R[2][1]*sensors->acc.data.y + R[2][2]*sensors->acc.data.z - 1
   };
 
   // convert the new attitude into Euler YPR

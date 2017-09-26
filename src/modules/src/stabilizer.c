@@ -175,16 +175,16 @@ LOG_ADD(LOG_UINT16, thrust, &control.thrust)
 LOG_GROUP_STOP(stabilizer)
 
 LOG_GROUP_START(acc)
-LOG_ADD(LOG_FLOAT, x, &sensorData.acc.x)
-LOG_ADD(LOG_FLOAT, y, &sensorData.acc.y)
-LOG_ADD(LOG_FLOAT, z, &sensorData.acc.z)
+LOG_ADD(LOG_FLOAT, x, &sensorData.acc.data.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.acc.data.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.acc.data.z)
 LOG_GROUP_STOP(acc)
 
 #ifdef LOG_SEC_IMU
 LOG_GROUP_START(accSec)
-LOG_ADD(LOG_FLOAT, x, &sensorData.accSec.x)
-LOG_ADD(LOG_FLOAT, y, &sensorData.accSec.y)
-LOG_ADD(LOG_FLOAT, z, &sensorData.accSec.z)
+LOG_ADD(LOG_FLOAT, x, &sensorData.accSec.data.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.accSec.data.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.accSec.data.z)
 LOG_GROUP_STOP(accSec)
 #endif
 
@@ -195,23 +195,23 @@ LOG_ADD(LOG_FLOAT, pressure, &sensorData.baro.pressure)
 LOG_GROUP_STOP(baro)
 
 LOG_GROUP_START(gyro)
-LOG_ADD(LOG_FLOAT, x, &sensorData.gyro.x)
-LOG_ADD(LOG_FLOAT, y, &sensorData.gyro.y)
-LOG_ADD(LOG_FLOAT, z, &sensorData.gyro.z)
+LOG_ADD(LOG_FLOAT, x, &sensorData.gyro.data.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.gyro.data.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.gyro.data.z)
 LOG_GROUP_STOP(gyro)
 
 #ifdef LOG_SEC_IMU
 LOG_GROUP_START(gyroSec)
-LOG_ADD(LOG_FLOAT, x, &sensorData.gyroSec.x)
-LOG_ADD(LOG_FLOAT, y, &sensorData.gyroSec.y)
-LOG_ADD(LOG_FLOAT, z, &sensorData.gyroSec.z)
+LOG_ADD(LOG_FLOAT, x, &sensorData.gyroSec.data.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.gyroSec.data.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.gyroSec.data.z)
 LOG_GROUP_STOP(gyroSec)
 #endif
 
 LOG_GROUP_START(mag)
-LOG_ADD(LOG_FLOAT, x, &sensorData.mag.x)
-LOG_ADD(LOG_FLOAT, y, &sensorData.mag.y)
-LOG_ADD(LOG_FLOAT, z, &sensorData.mag.z)
+LOG_ADD(LOG_FLOAT, x, &sensorData.mag.data.x)
+LOG_ADD(LOG_FLOAT, y, &sensorData.mag.data.y)
+LOG_ADD(LOG_FLOAT, z, &sensorData.mag.data.z)
 LOG_GROUP_STOP(mag)
 
 LOG_GROUP_START(controller)

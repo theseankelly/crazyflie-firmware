@@ -29,14 +29,14 @@ void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t 
 {
   sensorsAcquire(sensorData, tick); // Read sensors at full rate (1000Hz)
   if (RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
-    sensfusion6UpdateQ(sensorData->gyro.x, sensorData->gyro.y, sensorData->gyro.z,
-                       sensorData->acc.x, sensorData->acc.y, sensorData->acc.z,
+    sensfusion6UpdateQ(sensorData->gyro.data.x, sensorData->gyro.data.y, sensorData->gyro.data.z,
+                       sensorData->acc.data.x, sensorData->acc.data.y, sensorData->acc.data.z,
                        ATTITUDE_UPDATE_DT);
     sensfusion6GetEulerRPY(&state->attitude.roll, &state->attitude.pitch, &state->attitude.yaw);
 
-    state->acc.z = sensfusion6GetAccZWithoutGravity(sensorData->acc.x,
-                                                    sensorData->acc.y,
-                                                    sensorData->acc.z);
+    state->acc.z = sensfusion6GetAccZWithoutGravity(sensorData->acc.data.x,
+                                                    sensorData->acc.data.y,
+                                                    sensorData->acc.data.z);
 
     positionUpdateVelocity(state->acc.z, ATTITUDE_UPDATE_DT);
   }

@@ -82,7 +82,13 @@ typedef struct tdoaMeasurement_s {
   float stdDev;
 } tdoaMeasurement_t;
 
+typedef struct imu_s {
+  uint64_t timestamp;
+  Axis3f data;
+} imu_t;
+
 typedef struct baro_s {
+  uint64_t timestamp;
   float pressure;
   float temperature;
   float asl;
@@ -119,15 +125,15 @@ typedef struct zDistance_s {
 } zDistance_t;
 
 typedef struct sensorData_s {
-  Axis3f acc;
-  Axis3f gyro;
-  Axis3f mag;
+  imu_t acc;
+  imu_t gyro;
+  imu_t mag;
   baro_t baro;
   zDistance_t zrange;
   point_t position;
 #ifdef LOG_SEC_IMU
-  Axis3f accSec;
-  Axis3f gyroSec;
+  imu_t accSec;
+  imu_t gyroSec;
 #endif
 } sensorData_t;
 
