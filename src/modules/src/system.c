@@ -62,6 +62,7 @@
 #include "sysload.h"
 #include "deck.h"
 #include "extrx.h"
+#include "usec_time.h"
 
 /* Private variable */
 static bool selftestPassed;
@@ -113,6 +114,7 @@ void systemInit(void)
   ledseqInit();
   pmInit();
   buzzerInit();
+  initUsecTimer();
 
   isInit = true;
 }
