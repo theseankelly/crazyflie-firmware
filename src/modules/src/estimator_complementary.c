@@ -25,20 +25,28 @@ bool estimatorComplementaryTest(void)
   return pass;
 }
 
+// TODO: I can't decide where to stuff this variable -- static to this file or inside state_t??
+static volatile uint64_t previousSensorTimestamp = 0;
+
 void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t *control, const uint32_t tick)
 {
   sensorsAcquire(sensorData, tick); // Read sensors at full rate (1000Hz)
   if (RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
+
+    // Compute DT in seconds using the gyro timestamp
+    float dt = ((float)(sensorData->gyro.timestamp - previousSensorTimestamp) / 1000000.0f);
+    previousSensorTimestamp = sensorData->gyro.timestamp;
+
     sensfusion6UpdateQ(sensorData->gyro.data.x, sensorData->gyro.data.y, sensorData->gyro.data.z,
                        sensorData->acc.data.x, sensorData->acc.data.y, sensorData->acc.data.z,
-                       ATTITUDE_UPDATE_DT);
+                       dt);
     sensfusion6GetEulerRPY(&state->attitude.roll, &state->attitude.pitch, &state->attitude.yaw);
 
     state->acc.z = sensfusion6GetAccZWithoutGravity(sensorData->acc.data.x,
                                                     sensorData->acc.data.y,
                                                     sensorData->acc.data.z);
 
-    positionUpdateVelocity(state->acc.z, ATTITUDE_UPDATE_DT);
+    positionUpdateVelocity(state->acc.z, dt);
   }
 
   if (RATE_DO_EXECUTE(POS_UPDATE_RATE, tick)) {
