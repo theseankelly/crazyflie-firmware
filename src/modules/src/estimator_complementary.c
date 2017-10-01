@@ -42,11 +42,11 @@ void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t 
   if (RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
 
     // Compute DT in seconds using the gyro timestamp
-    #if STAB_DEBUG_USE_REAL_DT 
+//#ifdef STAB_DEBUG_USE_REAL_DT 
     float dt = ((float)(sensorData->gyro.timestamp - previousSensorTimestamp) / 1000000.0f);
-    #else
-    float dt = ATTITUDE_UPDATE_DT;
-    #endif
+//#else
+//    float dt = ATTITUDE_UPDATE_DT;
+//#endif
     previousSensorTimestamp = sensorData->gyro.timestamp;
 
 #ifdef PERFMONITOR

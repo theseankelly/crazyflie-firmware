@@ -130,12 +130,11 @@ static void stabilizerTask(void* param)
   tick = 1;
 
   while(1) {
-
-#if STAB_DEBUG_SYNC_IMU
+//#ifdef STAB_DEBUG_SYNC_IMU
     sensorsWaitForData();
-#else
-    vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
-#endif
+//#else
+//    vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
+//#endif
 
 #ifdef PERFMONITOR
     uint64_t loopTimestamp = usecTimestamp();
