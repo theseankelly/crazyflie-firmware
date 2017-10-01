@@ -106,6 +106,7 @@ static xQueueHandle gyroDataQueue;
 static xQueueHandle magnetometerDataQueue;
 static xQueueHandle barometerDataQueue;
 static xSemaphoreHandle sensorsDataReady;
+static xSemaphoreHandle sensorsDataReadComplete;
 
 static bool isInit = false;
 static sensorData_t sensors;
@@ -160,6 +161,11 @@ static void sensorsCalculateBiasMean(BiasObj* bias, Axis3i32* meanOut);
 static void sensorsAddBiasValue(BiasObj* bias, int16_t x, int16_t y, int16_t z);
 static bool sensorsFindBiasValue(BiasObj* bias);
 static void sensorsAccAlignToGravity(Axis3f* in, Axis3f* out);
+
+void sensorsWaitForData()
+{
+  xSemaphoreTake(sensorsDataReadComplete, portMAX_DELAY);
+}
 
 bool sensorsReadGyro(imu_t *gyro)
 {
@@ -226,7 +232,6 @@ static void sensorsTask(void *param)
                   SENSORS_MPU6500_BUFF_LEN + SENSORS_MAG_BUFF_LEN : SENSORS_MPU6500_BUFF_LEN]), dataTimestamp);
       }
 
-      vTaskSuspendAll(); // ensure all queues are populated at the same time
       xQueueOverwrite(accelerometerDataQueue, &sensors.acc);
       xQueueOverwrite(gyroDataQueue, &sensors.gyro);
       if (isMagnetometerPresent)
@@ -237,7 +242,9 @@ static void sensorsTask(void *param)
       {
         xQueueOverwrite(barometerDataQueue, &sensors.baro);
       }
-      xTaskResumeAll();
+
+      // Signal that the data queues have been updated
+      xSemaphoreGive(sensorsDataReadComplete);
     }
   }
 }
@@ -520,6 +527,7 @@ void sensorsInit(void)
   }
 
   sensorsDataReady = xSemaphoreCreateBinary();
+  sensorsDataReadComplete = xSemaphoreCreateBinary();
 
   sensorsBiasObjInit(&gyroBiasRunning);
   sensorsDeviceInit();

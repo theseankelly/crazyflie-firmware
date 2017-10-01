@@ -40,6 +40,9 @@ bool sensorsManufacturingTest(void);
 // For legacy control
 void sensorsAcquire(sensorData_t *sensors, const uint32_t tick);
 
+// Blocks waiting for data to be read and posted to queues, used to synchronize
+void sensorsWaitForData();
+
 // Allows individual sensor measurement
 bool sensorsReadGyro(imu_t *gyro);
 bool sensorsReadAcc(imu_t *acc);
