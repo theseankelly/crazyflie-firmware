@@ -39,7 +39,12 @@ static volatile uint64_t previousSensorTimestamp = 0;
 void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t *control, const uint32_t tick)
 {
   sensorsAcquire(sensorData, tick); // Read sensors at full rate (1000Hz)
+
+  // Set this to zero to do attitude updates at 1khz instead of 500hz
+  #define THROTTLE_ATTITUDE 0
+  #if THROTTLE_ATTUTIDE
   if (RATE_DO_EXECUTE(ATTITUDE_UPDATE_RATE, tick)) {
+  #endif
 
     // Compute DT in seconds using the gyro timestamp
 //#ifdef STAB_DEBUG_USE_REAL_DT 
@@ -67,7 +72,9 @@ void estimatorComplementary(state_t *state, sensorData_t *sensorData, control_t 
                                                     sensorData->acc.data.z);
 
     positionUpdateVelocity(state->acc.z, dt);
+#if THROTTLE_ATTITUDE
   }
+#endif
 
   if (RATE_DO_EXECUTE(POS_UPDATE_RATE, tick)) {
     // If position sensor data is preset, pass it throught
