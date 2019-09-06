@@ -62,19 +62,19 @@ AS_COMMAND_SILENT="  AS    $@"
 	@$(if $(QUIET), ,echo $(AS_COMMAND$(VERBOSE)) )
 	@$(AS_COMMAND)
 
-CLEAN_O_COMMAND=rm -f $(foreach o,$(OBJ),$(BIN)/$(o))
+CLEAN_O_COMMAND=$(call RM,$(foreach o,$(OBJ),$(BIN)/$(o)))
 CLEAN_O_COMMAND_SILENT="  CLEAN_O"
 clean_o: clean_version
 	@$(if $(QUIET), ,echo $(CLEAN_O_COMMAND$(VERBOSE)) )
 	@$(CLEAN_O_COMMAND)
 
-CLEAN_COMMAND=rm -f cf*.elf cf*.hex cf*.bin cf*.dfu cf*.map $(BIN)/dep/*.d $(BIN)/*.o
+CLEAN_COMMAND=$(call RM,cf*.elf cf*.hex cf*.bin cf*.dfu cf*.map $(BIN)/dep/*.d $(BIN)/*.o)
 CLEAN_COMMAND_SILENT="  CLEAN"
 clean:
 	@$(if $(QUIET), ,echo $(CLEAN_COMMAND$(VERBOSE)) )
 	@$(CLEAN_COMMAND)
 
-MRPROPER_COMMAND=rm -f current_platform.mk *~ hal/src/*~ hal/interface/*~ tasks/src/*~ tasks/inc/*~ utils/src/*~ utils/inc/*~ tools/make/*~; rm -rf bin/dep/*.d $(BIN)/*.a $(BIN)/vendor/*.o
+MRPROPER_COMMAND=$(call RM,current_platform.mk *~ hal/src/*~ hal/interface/*~ tasks/src/*~ tasks/inc/*~ utils/src/*~ utils/inc/*~ tools/make/*~ bin/dep/*.d $(BIN)/*.a $(BIN)/vendor/*.o)
 MRPROPER_COMMAND_SILENT="  MRPROPER"
 mrproper: clean
 	@$(if $(QUIET), ,echo $(MRPROPER_COMMAND$(VERBOSE)) )

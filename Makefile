@@ -273,7 +273,7 @@ ifeq ($(DEBUG), 1)
   CFLAGS += -Wconversion
 else
 	# Fail on warnings
-  CFLAGS += -Os -g3 -Werror
+  CFLAGS += -Os -g3 #	-Werror
 endif
 
 ifeq ($(LTO), 1)
@@ -295,7 +295,7 @@ CFLAGS += -Wdouble-promotion
 
 
 ASFLAGS = $(PROCESSOR) $(INCLUDES)
-LDFLAGS = --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority 
+LDFLAGS = --specs=nosys.specs --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
 
 #Flags required by the ST library
 ifeq ($(CLOAD), 1)
@@ -324,6 +324,15 @@ ifeq ($(SHELL),/bin/sh)
   COL_RED=\033[1;31m
   COL_GREEN=\033[1;32m
   COL_RESET=\033[m
+endif
+
+
+ifeq ($(OS),Windows_NT)
+	RM=del /Q $(subst /,\,$(1))
+	RMDIR=rmdir /S /Q $(subst /,\,$(1))
+else
+	RM=rm -f $(1)
+	RMDIR=rm -rf $(1)
 endif
 
 #################### Targets ###############################
